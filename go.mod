@@ -1,0 +1,1 @@
+module pr-allocation-service
