@@ -72,7 +72,17 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateTeamRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, "failed to decode request", zap.Error(err))
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "invalid request body")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	// Validate required fields
+	if req.TeamName == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "team_name is required")
+		return
+	}
+	if len(req.Members) == 0 {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "at least one member is required")
 		return
 	}
 
@@ -98,7 +108,7 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 
 	teamName := r.URL.Query().Get("team_name")
 	if teamName == "" {
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "team_name query parameter required")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "team_name query parameter required")
 		return
 	}
 
@@ -120,7 +130,12 @@ func (h *Handler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	var req domain.SetUserActiveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, "failed to decode request", zap.Error(err))
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "invalid request body")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	if req.UserID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "user_id is required")
 		return
 	}
 
@@ -142,7 +157,13 @@ func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreatePRRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, "failed to decode request", zap.Error(err))
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "invalid request body")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	// Validate required fields
+	if req.PullRequestID == "" || req.PullRequestName == "" || req.AuthorID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "pull_request_id, pull_request_name, and author_id are required")
 		return
 	}
 
@@ -175,7 +196,12 @@ func (h *Handler) MergePR(w http.ResponseWriter, r *http.Request) {
 	var req domain.MergePRRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, "failed to decode request", zap.Error(err))
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "invalid request body")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	if req.PullRequestID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "pull_request_id is required")
 		return
 	}
 
@@ -203,7 +229,12 @@ func (h *Handler) ReassignReviewer(w http.ResponseWriter, r *http.Request) {
 	var req domain.ReassignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, "failed to decode request", zap.Error(err))
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "invalid request body")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	if req.PullRequestID == "" || req.OldUserID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "pull_request_id and old_user_id are required")
 		return
 	}
 
@@ -247,7 +278,7 @@ func (h *Handler) GetPRsByReviewer(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		h.respondError(w, r, http.StatusBadRequest, domain.ErrNotFound, "user_id query parameter required")
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "user_id query parameter required")
 		return
 	}
 

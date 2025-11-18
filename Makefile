@@ -1,3 +1,5 @@
+# i used docker compose up --build and docker compose down -v for testing
+# hope it will work with '-'
 .PHONY: build run test clean docker-up docker-down
 
 build:

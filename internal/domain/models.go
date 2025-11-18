@@ -95,10 +95,11 @@ type ErrorDetail struct {
 
 // Error codes.
 const (
-	ErrTeamExists  = "TEAM_EXISTS"
-	ErrPRExists    = "PR_EXISTS"
-	ErrPRMerged    = "PR_MERGED"
-	ErrNotAssigned = "NOT_ASSIGNED"
-	ErrNoCandidate = "NO_CANDIDATE"
-	ErrNotFound    = "NOT_FOUND"
+	ErrTeamExists     = "TEAM_EXISTS"
+	ErrPRExists       = "PR_EXISTS"
+	ErrPRMerged       = "PR_MERGED"
+	ErrNotAssigned    = "NOT_ASSIGNED"
+	ErrNoCandidate    = "NO_CANDIDATE"
+	ErrNotFound       = "NOT_FOUND"
+	ErrInvalidRequest = "INVALID_REQUEST"
 )
