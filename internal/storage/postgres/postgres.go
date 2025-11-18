@@ -395,3 +395,165 @@ func (s *Storage) PRExists(ctx context.Context, prID string) (bool, error) {
 		Scan(&exists)
 	return exists, err
 }
+
+// GetAllPRs retrieves all pull requests.
+func (s *Storage) GetAllPRs(ctx context.Context) ([]*domain.PullRequest, error) {
+	log := logger.FromContext(ctx)
+	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
+              FROM pull_requests`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		log.Error(ctx, "failed to get all PRs", zap.Error(err))
+		return nil, fmt.Errorf("failed to get PRs: %w", err)
+	}
+	defer rows.Close()
+
+	var prs []*domain.PullRequest
+	for rows.Next() {
+		pr := &domain.PullRequest{}
+		var createdAt, updatedAt time.Time
+		var mergedAt sql.NullTime
+
+		if err := rows.Scan(&pr.PullRequestID, &pr.PullRequestName, &pr.AuthorID, &pr.Status,
+			pq.Array(&pr.AssignedReviewers), &createdAt, &mergedAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan PR: %w", err)
+		}
+
+		pr.CreatedAt = &createdAt
+		if mergedAt.Valid {
+			pr.MergedAt = &mergedAt.Time
+		}
+		prs = append(prs, pr)
+	}
+
+	return prs, nil
+}
+
+// GetOpenPRsByReviewers retrieves open PRs assigned to any of the given reviewers.
+func (s *Storage) GetOpenPRsByReviewers(ctx context.Context, userIDs []string) ([]*domain.PullRequest, error) {
+	log := logger.FromContext(ctx)
+	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
+              FROM pull_requests 
+              WHERE status = $1 AND assigned_reviewers && $2`
+
+	rows, err := s.db.QueryContext(ctx, query, domain.StatusOpen, pq.Array(userIDs))
+	if err != nil {
+		log.Error(ctx, "failed to get open PRs by reviewers", zap.Error(err))
+		return nil, fmt.Errorf("failed to get PRs: %w", err)
+	}
+	defer rows.Close()
+
+	var prs []*domain.PullRequest
+	for rows.Next() {
+		pr := &domain.PullRequest{}
+		var createdAt, updatedAt time.Time
+		var mergedAt sql.NullTime
+
+		if err := rows.Scan(&pr.PullRequestID, &pr.PullRequestName, &pr.AuthorID, &pr.Status,
+			pq.Array(&pr.AssignedReviewers), &createdAt, &mergedAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan PR: %w", err)
+		}
+
+		pr.CreatedAt = &createdAt
+		if mergedAt.Valid {
+			pr.MergedAt = &mergedAt.Time
+		}
+		prs = append(prs, pr)
+	}
+
+	log.Info(ctx, "open PRs retrieved by reviewers", zap.Int("count", len(prs)))
+	return prs, nil
+}
+
+// Statistics operations
+
+// GetTotalPRsCount returns total number of PRs.
+func (s *Storage) GetTotalPRsCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pull_requests`).Scan(&count)
+	return count, err
+}
+
+// GetPRsCountByStatus returns number of PRs by status.
+func (s *Storage) GetPRsCountByStatus(ctx context.Context, status domain.PRStatus) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pull_requests WHERE status = $1`, status).Scan(&count)
+	return count, err
+}
+
+// GetTotalTeamsCount returns total number of teams.
+func (s *Storage) GetTotalTeamsCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM teams`).Scan(&count)
+	return count, err
+}
+
+// GetTotalUsersCount returns total number of users.
+func (s *Storage) GetTotalUsersCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count)
+	return count, err
+}
+
+// GetActiveUsersCount returns number of active users.
+func (s *Storage) GetActiveUsersCount(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE is_active = true`).Scan(&count)
+	return count, err
+}
+
+// GetAllUsers retrieves all users.
+func (s *Storage) GetAllUsers(ctx context.Context) ([]*domain.User, error) {
+	log := logger.FromContext(ctx)
+	query := `SELECT user_id, username, team_name, is_active, created_at, updated_at FROM users`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		log.Error(ctx, "failed to get all users", zap.Error(err))
+		return nil, fmt.Errorf("failed to get users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*domain.User
+	for rows.Next() {
+		user := &domain.User{}
+		var team sql.NullString
+		if err := rows.Scan(&user.UserID, &user.Username, &team, &user.IsActive, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			log.Error(ctx, "failed to scan user", zap.Error(err))
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		if team.Valid {
+			user.TeamName = team.String
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
+// BulkUpdateUsersActive updates is_active for multiple users in a transaction.
+func (s *Storage) BulkUpdateUsersActive(ctx context.Context, userIDs []string, isActive bool) error {
+	log := logger.FromContext(ctx)
+
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	query := `UPDATE users SET is_active = $1, updated_at = $2 WHERE user_id = ANY($3)`
+	now := time.Now()
+
+	result, err := s.db.ExecContext(ctx, query, isActive, now, pq.Array(userIDs))
+	if err != nil {
+		log.Error(ctx, "failed to bulk update users", zap.Error(err))
+		return fmt.Errorf("failed to bulk update users: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	log.Info(ctx, "bulk update users completed", zap.Int("updated", int(rows)), zap.Bool("is_active", isActive))
+	return nil
+}

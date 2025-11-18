@@ -50,6 +50,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	// Teams - matching OpenAPI spec
 	router.HandleFunc("/team/add", h.CreateTeam).Methods("POST")
 	router.HandleFunc("/team/get", h.GetTeam).Methods("GET")
+	router.HandleFunc("/team/deactivateUsers", h.BulkDeactivateTeamUsers).Methods("POST")
 
 	// Users - matching OpenAPI spec
 	router.HandleFunc("/users/setIsActive", h.SetUserActive).Methods("POST")
@@ -59,6 +60,9 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	router.HandleFunc("/pullRequest/create", h.CreatePR).Methods("POST")
 	router.HandleFunc("/pullRequest/merge", h.MergePR).Methods("POST")
 	router.HandleFunc("/pullRequest/reassign", h.ReassignReviewer).Methods("POST")
+
+	// Statistics
+	router.HandleFunc("/statistics", h.GetStatistics).Methods("GET")
 }
 
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -319,4 +323,44 @@ func (h *Handler) respondError(w http.ResponseWriter, r *http.Request, status in
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && s[:len(substr)] == substr
+}
+
+// GetStatistics GET /statistics
+func (h *Handler) GetStatistics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	stats, err := h.service.GetStatistics(ctx)
+	if err != nil {
+		log.Error(ctx, "failed to get statistics", zap.Error(err))
+		h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, err.Error())
+		return
+	}
+	h.respondJSON(w, r, http.StatusOK, stats)
+}
+
+// BulkDeactivateTeamUsers POST /team/deactivateUsers
+func (h *Handler) BulkDeactivateTeamUsers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	var req domain.BulkDeactivateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error(ctx, "failed to decode request", zap.Error(err))
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+	if req.TeamName == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "team_name is required")
+		return
+	}
+	response, err := h.service.BulkDeactivateTeamUsers(ctx, &req)
+	if err != nil {
+		log.Error(ctx, "failed to bulk deactivate team users", zap.Error(err))
+		if contains(err.Error(), domain.ErrNotFound) {
+			h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "team not found")
+			return
+		}
+		h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, err.Error())
+		return
+	}
+	h.respondJSON(w, r, http.StatusOK, response)
 }
