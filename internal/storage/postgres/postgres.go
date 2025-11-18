@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -14,14 +15,17 @@ import (
 	"github.com/meld/pr-allocation-service/pkg/logger"
 )
 
-type PostgresStorage struct {
+type Storage struct {
 	db *sql.DB
 }
 
-func NewPostgresStorage(host, port, user, password, dbname, sslmode string) (*PostgresStorage, error) {
+func NewPostgresStorage(ctx context.Context, host, port, user, password, dbname, sslmode string) (*Storage, error) {
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		host, port, user, password, dbname, sslmode)
-
+	log := logger.FromContext(ctx)
+	log.Debug(ctx, "destination:",
+		zap.String("dsn", dsn),
+	)
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
@@ -35,15 +39,26 @@ func NewPostgresStorage(host, port, user, password, dbname, sslmode string) (*Po
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
 
-	return &PostgresStorage{db: db}, nil
+	log.Info(ctx, "postgres storage initialized successfully",
+		zap.String("host", host),
+		zap.String("port", port),
+		zap.String("dbname", dbname),
+	)
+	return &Storage{db: db}, nil
 }
 
-func (s *PostgresStorage) Close() error {
-	return s.db.Close()
+func (s *Storage) Close(ctx context.Context) error {
+	log := logger.FromContext(ctx)
+	if err := s.db.Close(); err != nil {
+		log.Error(ctx, "failed to close database connection", zap.Error(err))
+		return err
+	}
+	log.Info(ctx, "database connection closed successfully")
+	return nil
 }
 
-// User operations
-func (s *PostgresStorage) CreateUser(ctx context.Context, user *domain.User) error {
+// CreateUser User operations.
+func (s *Storage) CreateUser(ctx context.Context, user *domain.User) error {
 	log := logger.FromContext(ctx)
 	query := `INSERT INTO users (user_id, username, team_name, is_active, created_at, updated_at)
               VALUES ($1, $2, $3, $4, $5, $6)
@@ -54,7 +69,16 @@ func (s *PostgresStorage) CreateUser(ctx context.Context, user *domain.User) err
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
-	_, err := s.db.ExecContext(ctx, query, user.UserID, user.Username, user.TeamName, user.IsActive, user.CreatedAt, user.UpdatedAt)
+	_, err := s.db.ExecContext(
+		ctx,
+		query,
+		user.UserID,
+		user.Username,
+		user.TeamName,
+		user.IsActive,
+		user.CreatedAt,
+		user.UpdatedAt,
+	)
 	if err != nil {
 		log.Error(ctx, "failed to create/update user", zap.Error(err), zap.String("user_id", user.UserID))
 		return fmt.Errorf("failed to create user: %w", err)
@@ -64,7 +88,7 @@ func (s *PostgresStorage) CreateUser(ctx context.Context, user *domain.User) err
 	return nil
 }
 
-func (s *PostgresStorage) GetUser(ctx context.Context, userID string) (*domain.User, error) {
+func (s *Storage) GetUser(ctx context.Context, userID string) (*domain.User, error) {
 	log := logger.FromContext(ctx)
 	query := `SELECT user_id, username, team_name, is_active, created_at, updated_at FROM users WHERE user_id = $1`
 
@@ -80,23 +104,32 @@ func (s *PostgresStorage) GetUser(ctx context.Context, userID string) (*domain.U
 
 	if err == sql.ErrNoRows {
 		log.Debug(ctx, "user not found", zap.String("user_id", userID))
-		return nil, fmt.Errorf("user not found")
+		return nil, errors.New("user not found")
 	}
 	if err != nil {
 		log.Error(ctx, "failed to get user", zap.Error(err), zap.String("user_id", userID))
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
+	log.Info(ctx, "user retrieved successfully", zap.String("user_id", userID), zap.String("username", user.Username))
 	return user, nil
 }
 
-func (s *PostgresStorage) UpdateUser(ctx context.Context, user *domain.User) error {
+func (s *Storage) UpdateUser(ctx context.Context, user *domain.User) error {
 	log := logger.FromContext(ctx)
 	query := `UPDATE users SET username = $1, team_name = $2, is_active = $3, updated_at = $4 WHERE user_id = $5`
 
 	user.UpdatedAt = time.Now()
 
-	result, err := s.db.ExecContext(ctx, query, user.Username, user.TeamName, user.IsActive, user.UpdatedAt, user.UserID)
+	result, err := s.db.ExecContext(
+		ctx,
+		query,
+		user.Username,
+		user.TeamName,
+		user.IsActive,
+		user.UpdatedAt,
+		user.UserID,
+	)
 	if err != nil {
 		log.Error(ctx, "failed to update user", zap.Error(err), zap.String("user_id", user.UserID))
 		return fmt.Errorf("failed to update user: %w", err)
@@ -107,14 +140,14 @@ func (s *PostgresStorage) UpdateUser(ctx context.Context, user *domain.User) err
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("user not found")
+		return errors.New("user not found")
 	}
 
 	log.Info(ctx, "user updated", zap.String("user_id", user.UserID))
 	return nil
 }
 
-func (s *PostgresStorage) GetUsersByTeam(ctx context.Context, teamName string) ([]*domain.User, error) {
+func (s *Storage) GetUsersByTeam(ctx context.Context, teamName string) ([]*domain.User, error) {
 	log := logger.FromContext(ctx)
 	query := `SELECT user_id, username, team_name, is_active, created_at, updated_at FROM users WHERE team_name = $1`
 
@@ -138,12 +171,13 @@ func (s *PostgresStorage) GetUsersByTeam(ctx context.Context, teamName string) (
 		}
 		users = append(users, user)
 	}
+	log.Info(ctx, "users retrieved by team", zap.String("team_name", teamName), zap.Int("count", len(users)))
 
 	return users, nil
 }
 
-// Team operations
-func (s *PostgresStorage) CreateTeam(ctx context.Context, team *domain.Team) error {
+// CreateTeam Team operations.
+func (s *Storage) CreateTeam(ctx context.Context, team *domain.Team) error {
 	log := logger.FromContext(ctx)
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -193,7 +227,7 @@ func (s *PostgresStorage) CreateTeam(ctx context.Context, team *domain.Team) err
 	return nil
 }
 
-func (s *PostgresStorage) GetTeam(ctx context.Context, teamName string) (*domain.Team, error) {
+func (s *Storage) GetTeam(ctx context.Context, teamName string) (*domain.Team, error) {
 	log := logger.FromContext(ctx)
 
 	// Check if team exists
@@ -204,7 +238,7 @@ func (s *PostgresStorage) GetTeam(ctx context.Context, teamName string) (*domain
 		return nil, fmt.Errorf("failed to check team: %w", err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("team not found")
+		return nil, errors.New("team not found")
 	}
 
 	// Get team members
@@ -226,17 +260,24 @@ func (s *PostgresStorage) GetTeam(ctx context.Context, teamName string) (*domain
 		}
 	}
 
+	log.Info(ctx, "team retrieved successfully", zap.String("team_name", teamName), zap.Int("members", len(team.Members)))
 	return team, nil
 }
 
-func (s *PostgresStorage) TeamExists(ctx context.Context, teamName string) (bool, error) {
+func (s *Storage) TeamExists(ctx context.Context, teamName string) (bool, error) {
+	log := logger.FromContext(ctx)
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM teams WHERE team_name = $1)`, teamName).Scan(&exists)
-	return exists, err
+	if err != nil {
+		log.Error(ctx, "failed to check team existence", zap.Error(err), zap.String("team_name", teamName))
+		return false, err
+	}
+	log.Debug(ctx, "team existence checked", zap.String("team_name", teamName), zap.Bool("exists", exists))
+	return exists, nil
 }
 
-// PR operations
-func (s *PostgresStorage) CreatePR(ctx context.Context, pr *domain.PullRequest) error {
+// CreatePR PR operations.
+func (s *Storage) CreatePR(ctx context.Context, pr *domain.PullRequest) error {
 	log := logger.FromContext(ctx)
 	query := `INSERT INTO pull_requests (pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, updated_at)
               VALUES ($1, $2, $3, $4, $5, $6, $7)`
@@ -257,7 +298,7 @@ func (s *PostgresStorage) CreatePR(ctx context.Context, pr *domain.PullRequest) 
 	return nil
 }
 
-func (s *PostgresStorage) GetPR(ctx context.Context, prID string) (*domain.PullRequest, error) {
+func (s *Storage) GetPR(ctx context.Context, prID string) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
 	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
               FROM pull_requests WHERE pull_request_id = $1`
@@ -272,7 +313,7 @@ func (s *PostgresStorage) GetPR(ctx context.Context, prID string) (*domain.PullR
 	)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("PR not found")
+		return nil, errors.New("PR not found")
 	}
 	if err != nil {
 		log.Error(ctx, "failed to get PR", zap.Error(err), zap.String("pr_id", prID))
@@ -284,10 +325,11 @@ func (s *PostgresStorage) GetPR(ctx context.Context, prID string) (*domain.PullR
 		pr.MergedAt = &mergedAt.Time
 	}
 
+	log.Info(ctx, "PR retrieved successfully", zap.String("pr_id", prID), zap.String("status", string(pr.Status)))
 	return pr, nil
 }
 
-func (s *PostgresStorage) UpdatePR(ctx context.Context, pr *domain.PullRequest) error {
+func (s *Storage) UpdatePR(ctx context.Context, pr *domain.PullRequest) error {
 	log := logger.FromContext(ctx)
 	query := `UPDATE pull_requests 
               SET pull_request_name = $1, status = $2, assigned_reviewers = $3, merged_at = $4, updated_at = $5
@@ -307,14 +349,14 @@ func (s *PostgresStorage) UpdatePR(ctx context.Context, pr *domain.PullRequest) 
 		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("PR not found")
+		return errors.New("PR not found")
 	}
 
 	log.Info(ctx, "PR updated", zap.String("pr_id", pr.PullRequestID), zap.String("status", string(pr.Status)))
 	return nil
 }
 
-func (s *PostgresStorage) GetPRsByReviewer(ctx context.Context, userID string) ([]*domain.PullRequest, error) {
+func (s *Storage) GetPRsByReviewer(ctx context.Context, userID string) ([]*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
 	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
               FROM pull_requests WHERE $1 = ANY(assigned_reviewers)`
@@ -347,8 +389,9 @@ func (s *PostgresStorage) GetPRsByReviewer(ctx context.Context, userID string) (
 	return prs, nil
 }
 
-func (s *PostgresStorage) PRExists(ctx context.Context, prID string) (bool, error) {
+func (s *Storage) PRExists(ctx context.Context, prID string) (bool, error) {
 	var exists bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_requests WHERE pull_request_id = $1)`, prID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_requests WHERE pull_request_id = $1)`, prID).
+		Scan(&exists)
 	return exists, err
 }

@@ -23,54 +23,26 @@ func NewHandler(svc *service.Service) *Handler {
 	}
 }
 
-func (h *Handler) RequestIDMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Header.Get("X-Request-ID")
-		if requestID == "" {
-			requestID = uuid.New().String()
-		}
-
-		w.Header().Set("X-Request-ID", requestID)
-		ctx := logger.WithRequestID(r.Context(), requestID)
-
-		log := logger.FromContext(ctx)
-		log.Debug(ctx, "incoming request",
-			zap.String("method", r.Method),
-			zap.String("path", r.URL.Path))
-
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func (h *Handler) LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		log := logger.FromContext(ctx)
-		log.Info(ctx, "request received",
-			zap.String("method", r.Method),
-			zap.String("uri", r.RequestURI))
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (h *Handler) RecoveryMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer func() {
-			if err := recover(); err != nil {
-				ctx := r.Context()
-				log := logger.FromContext(ctx)
-				log.Error(ctx, "panic recovered", zap.Any("error", err))
-				h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, "internal server error")
+func (h *Handler) LoggingMiddleware(log logger.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.New().String()
 			}
-		}()
-		next.ServeHTTP(w, r)
-	})
+			w.Header().Set("X-Request-ID", requestID)
+			ctx := logger.WithRequestID(r.Context(), requestID)
+			ctx = logger.WithLogger(ctx, log)
+			log.Info(ctx, "request received",
+				zap.String("method", r.Method),
+				zap.String("uri", r.RequestURI))
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
 
-func (h *Handler) RegisterRoutes(router *mux.Router) {
-	router.Use(h.RequestIDMiddleware)
-	router.Use(h.LoggingMiddleware)
-	router.Use(h.RecoveryMiddleware)
+func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
+	router.Use(h.LoggingMiddleware(log))
 
 	// Health
 	router.HandleFunc("/health", h.HealthCheck).Methods("GET")
@@ -93,11 +65,10 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// POST /team/add
+// CreateTeam POST /team/add.
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
-
 	var req domain.CreateTeamRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Error(ctx, "failed to decode request", zap.Error(err))
@@ -120,7 +91,7 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusCreated, map[string]*domain.Team{"team": team})
 }
 
-// GET /team/get?team_name=...
+// GetTeam GET /team/get?team_name=...
 func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -141,7 +112,7 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusOK, team)
 }
 
-// POST /users/setIsActive
+// SetUserActive POST /users/setIsActive.
 func (h *Handler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -163,7 +134,7 @@ func (h *Handler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusOK, map[string]*domain.User{"user": user})
 }
 
-// POST /pullRequest/create
+// CreatePR POST /pullRequest/create.
 func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -196,7 +167,7 @@ func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusCreated, map[string]*domain.PullRequest{"pr": pr})
 }
 
-// POST /pullRequest/merge
+// MergePR POST /pullRequest/merge.
 func (h *Handler) MergePR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -224,7 +195,7 @@ func (h *Handler) MergePR(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusOK, map[string]*domain.PullRequest{"pr": pr})
 }
 
-// POST /pullRequest/reassign
+// ReassignReviewer POST /pullRequest/reassign.
 func (h *Handler) ReassignReviewer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -262,14 +233,14 @@ func (h *Handler) ReassignReviewer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"pr":          pr,
 		"replaced_by": newReviewerID,
 	}
 	h.respondJSON(w, r, http.StatusOK, response)
 }
 
-// GET /users/getReview?user_id=...
+// GetPRsByReviewer GET /users/getReview?user_id=...
 func (h *Handler) GetPRsByReviewer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
@@ -287,14 +258,14 @@ func (h *Handler) GetPRsByReviewer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"user_id":       userID,
 		"pull_requests": prs,
 	}
 	h.respondJSON(w, r, http.StatusOK, response)
 }
 
-func (h *Handler) respondJSON(w http.ResponseWriter, r *http.Request, status int, data interface{}) {
+func (h *Handler) respondJSON(w http.ResponseWriter, r *http.Request, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 

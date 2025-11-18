@@ -9,7 +9,6 @@ import (
 
 const (
 	loggerRequestIDKey = "x-request-id"
-	loggerTraceIDKey   = "x-trace-id"
 	loggerKey          = "logger"
 )
 
@@ -18,6 +17,7 @@ type Logger interface {
 	Debug(ctx context.Context, mgs string, fields ...zap.Field)
 	Warn(ctx context.Context, mgs string, fields ...zap.Field)
 	Error(ctx context.Context, mgs string, fields ...zap.Field)
+	Fatal(ctx context.Context, mgs string, fields ...zap.Field)
 }
 
 type L struct {
@@ -71,12 +71,16 @@ func (l *L) Error(ctx context.Context, mgs string, fields ...zap.Field) {
 	l.z.Error(mgs, fields...)
 }
 
+func (l *L) Fatal(ctx context.Context, mgs string, fields ...zap.Field) {
+	id, ok := ctx.Value(loggerRequestIDKey).(string)
+	if !ok {
+		id = uuid.NewString()
+	}
+	fields = append(fields, zap.String(loggerRequestIDKey, id))
+	l.z.Fatal(mgs, fields...)
+}
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, loggerRequestIDKey, requestID)
-}
-
-func WithTraceID(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, loggerTraceIDKey, traceID)
 }
 
 func WithLogger(ctx context.Context, logger Logger) context.Context {
@@ -84,5 +88,10 @@ func WithLogger(ctx context.Context, logger Logger) context.Context {
 }
 
 func FromContext(ctx context.Context) Logger {
-	return ctx.Value(loggerKey).(Logger)
+	logger, ok := ctx.Value(loggerKey).(Logger)
+	if !ok || logger == nil {
+		// Return a basic logger as fallback to avoid panics
+		return NewLogger("prod")
+	}
+	return logger
 }
