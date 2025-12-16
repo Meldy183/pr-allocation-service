@@ -17,8 +17,23 @@ services:
     container_name: pr-allocation-service
     ports:
       - "8080:8080"
-    env_file:
-      - ./config/.env
+    environment:
+      ENV: ${ENV:-dev}
+      SERVER_HOST: ${SERVER_HOST:-localhost}
+      SERVER_PORT: ${SERVERPORT:-8080}
+
+      # Database Configuration
+      DATABASE_HOST: ${DATABASE_HOST:-postgres}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_NAME: ${DATABASE_NAME:-pr_allocation}
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
+
+      # Config path
+      CONFIG_PATH: ${CONFIG_PATH:-./config}
+
+
     depends_on:
       - postgres
 

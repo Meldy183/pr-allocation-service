@@ -19,7 +19,7 @@ type TeamMember struct {
 	IsActive bool   `json:"is_active"`
 }
 
-// Team represents a group of users.
+// The Team represents a group of users.
 type Team struct {
 	TeamName  string       `json:"team_name"`
 	Members   []TeamMember `json:"members"`

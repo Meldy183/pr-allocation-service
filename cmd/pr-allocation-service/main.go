@@ -34,6 +34,7 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
+	fmt.Println(cfg.ENV)
 	env := cfg.ENV
 	log := logger.NewLogger(env)
 	ctx := context.Background()
