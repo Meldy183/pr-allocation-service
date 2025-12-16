@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/domain"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/pkg/logger"
 	"time"
+
+	"github.com/meld/pr-allocation-service/sharedPackage/pkg/logger"
+
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/domain"
 
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
