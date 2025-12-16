@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Meldy183/pr-allocation-service/sharedPackage/pkg/logger"
 	"go.uber.org/zap"
 )
 

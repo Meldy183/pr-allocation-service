@@ -1,4 +1,4 @@
-module sharedPackage
+module github.com/Meldy183/pr-allocation-service/sharedPackage
 
 go 1.22.2
 
