@@ -3,6 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/config"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/service"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/storage/postgres"
+	transport "github.com/meld/pr-allocation-service/pr-allocation-service/internal/transport/http"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/pkg/logger"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,11 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/meld/pr-allocation-service/internal/config"
-	"github.com/meld/pr-allocation-service/internal/service"
-	"github.com/meld/pr-allocation-service/internal/storage/postgres"
-	transport "github.com/meld/pr-allocation-service/internal/transport/http"
-	"github.com/meld/pr-allocation-service/pkg/logger"
 	"go.uber.org/zap"
 )
 

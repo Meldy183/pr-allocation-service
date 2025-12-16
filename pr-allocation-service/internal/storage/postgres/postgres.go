@@ -5,14 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/domain"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/pkg/logger"
 	"time"
 
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 	"go.uber.org/zap"
-
-	"github.com/meld/pr-allocation-service/internal/domain"
-	"github.com/meld/pr-allocation-service/pkg/logger"
 )
 
 type Storage struct {

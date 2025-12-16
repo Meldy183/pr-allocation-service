@@ -2,15 +2,14 @@ package http
 
 import (
 	"encoding/json"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/domain"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/service"
+	"github.com/meld/pr-allocation-service/pr-allocation-service/pkg/logger"
 	"net/http"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
-
-	"github.com/meld/pr-allocation-service/internal/domain"
-	"github.com/meld/pr-allocation-service/internal/service"
-	"github.com/meld/pr-allocation-service/pkg/logger"
 )
 
 type Handler struct {
