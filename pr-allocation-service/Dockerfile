@@ -3,6 +3,7 @@ WORKDIR /app
 COPY go.work go.work.sum ./
 COPY shared/go.mod shared/go.sum ./shared/
 COPY pr-allocation-service/go.mod pr-allocation-service/go.sum ./pr-allocation-service/
+COPY code-storage-service/go.mod code-storage-service/go.sum ./code-storage-service/
 RUN cd pr-allocation-service && go mod download
 COPY shared ./shared
 COPY pr-allocation-service ./pr-allocation-service

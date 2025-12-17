@@ -44,7 +44,7 @@ services:
     environment:
       ENV: ${ENV:-dev}
       SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: ${SERVER_PORT:-8081}
+      SERVER_PORT: "8081"
       DATABASE_HOST: ${DATABASE_HOST:-postgres}
       DATABASE_PORT: ${DATABASE_PORT:-5432}
       DATABASE_USER: ${DATABASE_USER:-postgres}
