@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/domain"
-	"github.com/Meldy183/pr-allocation-service/sharedPackage/pkg/logger"
+	"github.com/Meldy183/pr-allocation-service/internal/domain"
+	"github.com/Meldy183/sharedPackage/pkg/logger"
 
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
