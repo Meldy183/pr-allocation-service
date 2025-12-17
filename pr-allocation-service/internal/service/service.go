@@ -8,7 +8,7 @@ import (
 
 	"github.com/Meldy183/pr-allocation-service/internal/domain"
 	"github.com/Meldy183/pr-allocation-service/internal/storage"
-	"github.com/Meldy183/sharedPackage/pkg/logger"
+	"github.com/Meldy183/shared/pkg/logger"
 
 	"go.uber.org/zap"
 )

@@ -14,7 +14,7 @@ import (
 	"github.com/Meldy183/pr-allocation-service/internal/service"
 	"github.com/Meldy183/pr-allocation-service/internal/storage/postgres"
 	transport "github.com/Meldy183/pr-allocation-service/internal/transport/http"
-	"github.com/Meldy183/sharedPackage/pkg/logger"
+	"github.com/Meldy183/shared/pkg/logger"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
