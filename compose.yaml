@@ -10,33 +10,50 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./pr-allocation-service/init.sql:/docker-entrypoint-initdb.d/01-pr-allocation.sql
+      - ./code-storage-service/init.sql:/docker-entrypoint-initdb.d/02-code-storage.sql
 
   pr-allocation-service:
-    build: .
+    build:
+      context: .
+      dockerfile: pr-allocation-service/Dockerfile
     container_name: pr-allocation-service
     ports:
       - "8080:8080"
     environment:
       ENV: ${ENV:-dev}
-      SERVER_HOST: ${SERVER_HOST:-localhost}
-      SERVER_PORT: ${SERVERPORT:-8080}
-
-      # Database Configuration
+      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
+      SERVER_PORT: ${SERVER_PORT:-8080}
       DATABASE_HOST: ${DATABASE_HOST:-postgres}
       DATABASE_PORT: ${DATABASE_PORT:-5432}
       DATABASE_USER: ${DATABASE_USER:-postgres}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
       DATABASE_NAME: ${DATABASE_NAME:-pr_allocation}
       DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
-
-      # Config path
       CONFIG_PATH: ${CONFIG_PATH:-./config}
+    depends_on:
+      - postgres
 
-
+  code-storage-service:
+    build:
+      context: .
+      dockerfile: code-storage-service/Dockerfile
+    container_name: code-storage-service
+    ports:
+      - "8081:8081"
+    environment:
+      ENV: ${ENV:-dev}
+      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
+      SERVER_PORT: ${SERVER_PORT:-8081}
+      DATABASE_HOST: ${DATABASE_HOST:-postgres}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      DATABASE_DBNAME: ${DATABASE_DBNAME:-pr_allocation}
+      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
+      CONFIG_PATH: ${CONFIG_PATH:-./config}
     depends_on:
       - postgres
 
 volumes:
   postgres_data:
-
