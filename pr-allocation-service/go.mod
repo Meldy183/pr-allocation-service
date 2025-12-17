@@ -1,4 +1,4 @@
-module github.com/Meldy183/pr-allocation-service/pr-allocation-service
+module github.com/Meldy183pr-allocation-service
 
 go 1.24
 

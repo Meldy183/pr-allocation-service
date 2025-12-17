@@ -1,4 +1,4 @@
-module github.com/Meldy183/pr-allocation-service/codestorageService
+module github.com/Meldy183/codestorageService
 
 go 1.24
 
