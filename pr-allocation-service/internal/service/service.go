@@ -6,9 +6,9 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/pkg/logger"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/domain"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/storage"
+	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/domain"
+	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/storage"
+	"github.com/Meldy183/pr-allocation-service/sharedPackage/pkg/logger"
 
 	"go.uber.org/zap"
 )

@@ -3,16 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/config"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/service"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/internal/storage/postgres"
-	transport "github.com/meld/pr-allocation-service/pr-allocation-service/internal/transport/http"
-	"github.com/meld/pr-allocation-service/pr-allocation-service/pkg/logger"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/config"
+	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/service"
+	"github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/storage/postgres"
+	transport "github.com/Meldy183/pr-allocation-service/pr-allocation-service/internal/transport/http"
+	"github.com/Meldy183/pr-allocation-service/sharedPackage/pkg/logger"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"

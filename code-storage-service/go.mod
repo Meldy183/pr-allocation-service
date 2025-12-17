@@ -1,3 +1,9 @@
 module github.com/Meldy183/pr-allocation-service/codestorageService
 
-go 1.23.0
+go 1.24
+
+toolchain go1.24.11
+
+require go.uber.org/zap v1.27.1
+
+require go.uber.org/multierr v1.11.0 // indirect
