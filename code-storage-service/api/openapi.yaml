@@ -1,0 +1,320 @@
+openapi: 3.0.3
+info:
+  title: Code Storage Service
+  version: "1.0.0"
+
+tags:
+  - name: Storage
+
+components:
+  parameters:
+    TeamIdQuery:
+      name: team_id
+      in: query
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Идентификатор команды
+
+    RootCommitQuery:
+      name: root_commit
+      in: query
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Корневой коммит репозитория
+
+    CommitIdQuery:
+      name: commit_id
+      in: query
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Идентификатор коммита
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - TEAM_NOT_FOUND
+                - ROOT_COMMIT_NOT_FOUND
+                - COMMIT_NOT_FOUND
+                - REPOSITORY_ALREADY_INITIALIZED
+                - INVALID_PARENT
+                - COMMIT_NOT_LEAF
+                - MERGE_CONFLICT
+                - INVALID_COMMIT_NAME
+                - COMMIT_NAME_EXISTS
+            message:
+              type: string
+      example:
+        error:
+          code: COMMIT_NOT_FOUND
+          message: commit does not exist
+
+    Commit:
+      type: object
+      required:
+        - commit_id
+        - team_id
+        - root_commit
+        - parent_commit_ids
+        - createdAt
+      properties:
+        commit_id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        root_commit:
+          type: string
+          format: uuid
+        parent_commit_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Родительские коммиты.
+            0 — для root commit,
+            1 — для push,
+            2 — для merge
+        createdAt:
+          type: string
+          format: date-time
+        commit_name:
+          type: string
+          nullable: true
+          description: Человекочитаемое имя коммита (уникально в рамках root_commit)
+
+paths:
+  /storage/init:
+    post:
+      tags: [Storage]
+      summary: Инициализировать репозиторий для команды (создаёт root commit)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [team_id, code]
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с исходным кодом (≤ 100MB)
+      responses:
+        '200':
+          description: Репозиторий инициализирован или уже существовал (идемпотентно)
+        '404':
+          description: Команда не найдена
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /storage/push:
+    post:
+      tags: [Storage]
+      summary: Создать новый коммит на основе родительского
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - team_id
+                - root_commit
+                - commit_id
+                - code
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                root_commit:
+                  type: string
+                  format: uuid
+                commit_id:
+                  type: string
+                  format: uuid
+                  description: Родительский коммит
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с кодом (≤ 100MB)
+      responses:
+        '201':
+          description: Коммит создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/Commit'
+        '404':
+          description: Команда, репозиторий или родительский коммит не найдены
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /storage/checkout:
+    get:
+      tags: [Storage]
+      summary: Получить код конкретного коммита
+      parameters:
+        - $ref: '#/components/parameters/TeamIdQuery'
+        - $ref: '#/components/parameters/RootCommitQuery'
+        - $ref: '#/components/parameters/CommitIdQuery'
+      responses:
+        '200':
+          description: ZIP архив с кодом коммита
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Коммит не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /storage/merge:
+    post:
+      tags: [Storage]
+      summary: Смёржить два leaf-коммита в рамках одного репозитория
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - team_id
+                - root_commit
+                - commit_id1
+                - commit_id2
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                root_commit:
+                  type: string
+                  format: uuid
+                commit_id1:
+                  type: string
+                  format: uuid
+                commit_id2:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Merge-коммит создан
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commit]
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/Commit'
+        '404':
+          description: Коммиты или репозиторий не найдены
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '409':
+          description: Нарушение правил merge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              examples:
+                notLeaf:
+                  value:
+                    error:
+                      code: COMMIT_NOT_LEAF
+                      message: only leaf commits can be merged
+                conflict:
+                  value:
+                    error:
+                      code: MERGE_CONFLICT
+                      message: merge conflict detected
+
+  /storage/commitName/{commit_id}:
+    get:
+      tags: [Storage]
+      summary: Получить имя коммита по commit_id
+      parameters:
+        - name: commit_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Имя коммита
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commit_id, name]
+                properties:
+                  commit_id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+        '404':
+          description: Коммит не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /storage/commitID:
+    get:
+      tags: [Storage]
+      summary: Получить commit_id по имени коммита
+      parameters:
+        - $ref: '#/components/parameters/TeamIdQuery'
+        - $ref: '#/components/parameters/RootCommitQuery'
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя коммита (уникально в рамках root_commit)
+      responses:
+        '200':
+          description: Найденный commit_id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commit_id]
+                properties:
+                  commit_id:
+                    type: string
+                    format: uuid
+        '404':
+          description: Коммит с таким именем не найден
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
