@@ -5,5 +5,5 @@ toolchain go1.24.11
 use (
 	./code-storage-service
 	./pr-allocation-service
-	./sharedPackage
+	./shared
 )

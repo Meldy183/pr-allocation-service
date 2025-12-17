@@ -1,4 +1,4 @@
-module github.com/Meldy183/sharedPackage
+module github.com/Meldy183/shared
 
 go 1.24
 

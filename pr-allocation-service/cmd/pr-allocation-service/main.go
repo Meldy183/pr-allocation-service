@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/gorilla/mux"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/gorilla/mux"
 
 	"github.com/Meldy183/pr-allocation-service/internal/config"
 	"github.com/Meldy183/pr-allocation-service/internal/service"
