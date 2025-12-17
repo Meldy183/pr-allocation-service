@@ -1,8 +1,6 @@
-module github.com/Meldy183/codestorageService
+module github.com/Meldy183/code-storage-service
 
 go 1.24
-
-toolchain go1.24.11
 
 require go.uber.org/zap v1.27.1
 
