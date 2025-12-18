@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -9,18 +10,57 @@ import (
 
 // MustLoadConfig loads configuration from file and environment
 func MustLoadConfig(path string) error {
+	// Set default values
+	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("server.port", "8082")
+	viper.SetDefault("services.pr_allocation.host", "localhost")
+	viper.SetDefault("services.pr_allocation.port", "8080")
+	viper.SetDefault("services.code_storage.host", "localhost")
+	viper.SetDefault("services.code_storage.port", "8081")
+	viper.SetDefault("env", "development")
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	if path == "" {
 		path = "./config"
 	}
 	viper.AddConfigPath(path)
+
+	// Try to read config file, but don't fail if not found
 	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("error reading config file: %w", err)
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return fmt.Errorf("error reading config file: %w", err)
+		}
 	}
+
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+
+	// Explicit environment variable bindings
+	bindEnvWithDefault("server.host", "SERVER_HOST")
+	bindEnvWithDefault("server.port", "SERVER_PORT")
+	bindEnvWithDefault("services.pr_allocation.host", "PR_ALLOCATION_HOST")
+	bindEnvWithDefault("services.pr_allocation.port", "PR_ALLOCATION_PORT")
+	bindEnvWithDefault("services.code_storage.host", "CODE_STORAGE_HOST")
+	bindEnvWithDefault("services.code_storage.port", "CODE_STORAGE_PORT")
+	bindEnvWithDefault("env", "ENV")
+
+	// Support full URL env vars
+	if url := os.Getenv("PR_ALLOCATION_SERVICE_URL"); url != "" {
+		// Parse URL and set host/port
+		viper.Set("services.pr_allocation.url", url)
+	}
+	if url := os.Getenv("CODE_STORAGE_SERVICE_URL"); url != "" {
+		viper.Set("services.code_storage.url", url)
+	}
+
 	return nil
+}
+
+func bindEnvWithDefault(key, envVar string) {
+	if val := os.Getenv(envVar); val != "" {
+		viper.Set(key, val)
+	}
 }
 
 // Config holds application configuration

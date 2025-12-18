@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -9,18 +10,53 @@ import (
 
 // MustLoadConfig loads configuration from file and environment
 func MustLoadConfig(path string) error {
+	// Set default values
+	viper.SetDefault("server.host", "0.0.0.0")
+	viper.SetDefault("server.port", "8081")
+	viper.SetDefault("database.host", "localhost")
+	viper.SetDefault("database.port", "5432")
+	viper.SetDefault("database.user", "postgres")
+	viper.SetDefault("database.password", "postgres")
+	viper.SetDefault("database.dbname", "code_storage")
+	viper.SetDefault("database.sslmode", "disable")
+	viper.SetDefault("env", "development")
+
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	if path == "" {
 		path = "./config"
 	}
 	viper.AddConfigPath(path)
+
+	// Try to read config file, but don't fail if not found
 	if err := viper.ReadInConfig(); err != nil {
-		return fmt.Errorf("error reading config file: %w", err)
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return fmt.Errorf("error reading config file: %w", err)
+		}
 	}
+
+	// Environment variable binding with proper prefix
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
+
+	// Explicit environment variable bindings
+	bindEnvWithDefault("server.host", "SERVER_HOST")
+	bindEnvWithDefault("server.port", "SERVER_PORT")
+	bindEnvWithDefault("database.host", "DB_HOST")
+	bindEnvWithDefault("database.port", "DB_PORT")
+	bindEnvWithDefault("database.user", "DB_USER")
+	bindEnvWithDefault("database.password", "DB_PASSWORD")
+	bindEnvWithDefault("database.dbname", "DB_NAME")
+	bindEnvWithDefault("database.sslmode", "DB_SSLMODE")
+	bindEnvWithDefault("env", "ENV")
+
 	return nil
+}
+
+func bindEnvWithDefault(key, envVar string) {
+	if val := os.Getenv(envVar); val != "" {
+		viper.Set(key, val)
+	}
 }
 
 // Config holds application configuration

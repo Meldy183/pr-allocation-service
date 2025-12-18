@@ -308,11 +308,19 @@ func (s *Service) ListCommits(ctx context.Context, username, teamName, repoName 
 		return nil, domain.ErrTeamNotFound
 	}
 
-	// Get root commit from cache
+	// Get root commit from cache, or fetch from code-storage
 	rootCommit, ok := s.getRootCommit(teamID, repoName)
 	if !ok {
-		log.Error(ctx, "repository not found in cache", zap.String("repo", repoName))
-		return nil, domain.ErrCommitNotFound
+		// Try to recover root commit from code-storage
+		log.Info(ctx, "root commit not in cache, fetching from code-storage", zap.String("repo", repoName))
+		rootCommit, err = s.codeClient.GetRootCommitByRepoName(ctx, teamID, repoName)
+		if err != nil {
+			log.Error(ctx, "repository not found", zap.String("repo", repoName), zap.Error(err))
+			return nil, domain.ErrCommitNotFound
+		}
+		// Save to cache for future use
+		s.setRootCommit(teamID, repoName, rootCommit)
+		log.Info(ctx, "recovered root commit from code-storage", zap.String("repo", repoName), zap.String("root_commit", rootCommit.String()))
 	}
 
 	// List commits from code-storage
@@ -735,6 +743,12 @@ func (s *Service) getRootCommit(teamID uuid.UUID, repoName string) (uuid.UUID, b
 	repoKey := fmt.Sprintf("%s:%s", teamID.String(), repoName)
 	rootCommit, ok := s.repoRootCommits[repoKey]
 	return rootCommit, ok
+}
+
+// setRootCommit saves root commit UUID for a repo to cache
+func (s *Service) setRootCommit(teamID uuid.UUID, repoName string, rootCommit uuid.UUID) {
+	repoKey := fmt.Sprintf("%s:%s", teamID.String(), repoName)
+	s.repoRootCommits[repoKey] = rootCommit
 }
 
 // resolveCommitByName resolves a commit name to UUID using code-storage

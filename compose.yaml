@@ -3,9 +3,9 @@ services:
     image: postgres:15.9
     container_name: pr-allocation-db
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=pr_allocation
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: pr_allocation
     ports:
       - "5432:5432"
     volumes:
@@ -21,16 +21,12 @@ services:
     ports:
       - "8080:8080"
     environment:
-      ENV: ${ENV:-dev}
-      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: ${SERVER_PORT:-8080}
-      DATABASE_HOST: ${DATABASE_HOST:-postgres}
-      DATABASE_PORT: ${DATABASE_PORT:-5432}
-      DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      DATABASE_NAME: ${DATABASE_NAME:-pr_allocation}
-      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
-      CONFIG_PATH: ${CONFIG_PATH:-./config}
+      DB_HOST: ${PR_DB_HOST:-postgres}
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_NAME: ${PR_DB_NAME:-pr_allocation}
+      DB_SSLMODE: disable
     depends_on:
       - postgres
 
@@ -42,16 +38,12 @@ services:
     ports:
       - "8081:8081"
     environment:
-      ENV: ${ENV:-dev}
-      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: "8081"
-      DATABASE_HOST: ${DATABASE_HOST:-postgres}
-      DATABASE_PORT: ${DATABASE_PORT:-5432}
-      DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-postgres}
-      DATABASE_DBNAME: ${DATABASE_DBNAME:-pr_allocation}
-      DATABASE_SSLMODE: ${DATABASE_SSLMODE:-disable}
-      CONFIG_PATH: ${CONFIG_PATH:-./config}
+      DB_HOST: ${STORAGE_DB_HOST:-postgres}
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_NAME: ${STORAGE_DB_NAME:-code_storage}
+      DB_SSLMODE: disable
     depends_on:
       - postgres
 
@@ -63,14 +55,10 @@ services:
     ports:
       - "8082:8082"
     environment:
-      ENV: ${ENV:-dev}
-      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
-      SERVER_PORT: "8082"
-      SERVICES_PR_ALLOCATION_HOST: pr-allocation-service
-      SERVICES_PR_ALLOCATION_PORT: "8080"
-      SERVICES_CODE_STORAGE_HOST: code-storage-service
-      SERVICES_CODE_STORAGE_PORT: "8081"
-      CONFIG_PATH: ${CONFIG_PATH:-./config}
+      PR_ALLOCATION_HOST: pr-allocation-service
+      PR_ALLOCATION_PORT: "8080"
+      CODE_STORAGE_HOST: code-storage-service
+      CODE_STORAGE_PORT: "8081"
     depends_on:
       - pr-allocation-service
       - code-storage-service

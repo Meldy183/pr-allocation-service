@@ -294,3 +294,29 @@ func (s *Service) GetCommitIDByName(ctx context.Context, teamID, rootCommit uuid
 
 	return commitID, nil
 }
+
+// GetRootCommitByRepoName finds the root commit for a repository by its name
+func (s *Service) GetRootCommitByRepoName(ctx context.Context, teamID uuid.UUID, repoName string) (uuid.UUID, error) {
+	log := logger.FromContext(ctx)
+
+	// Check if team exists
+	exists, err := s.storage.TeamExists(ctx, teamID)
+	if err != nil {
+		log.Error(ctx, "failed to check team existence", zap.Error(err))
+		return uuid.Nil, err
+	}
+	if !exists {
+		return uuid.Nil, domain.ErrTeamNotFound
+	}
+
+	rootCommit, err := s.storage.GetRootCommitByRepoName(ctx, teamID, repoName)
+	if err != nil {
+		if errors.Is(err, domain.ErrCommitNotFound) {
+			return uuid.Nil, domain.ErrCommitNotFound
+		}
+		log.Error(ctx, "failed to get root commit by repo name", zap.Error(err))
+		return uuid.Nil, err
+	}
+
+	return rootCommit, nil
+}

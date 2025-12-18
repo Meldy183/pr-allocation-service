@@ -39,6 +39,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	router.HandleFunc("/storage/checkout", h.Checkout).Methods(http.MethodGet)
 	router.HandleFunc("/storage/merge", h.Merge).Methods(http.MethodPost)
 	router.HandleFunc("/storage/commits", h.ListCommits).Methods(http.MethodGet)
+	router.HandleFunc("/storage/rootCommit", h.GetRootCommitByRepoName).Methods(http.MethodGet)
 	router.HandleFunc("/storage/commitName/{commit_id}", h.GetCommitName).Methods(http.MethodGet)
 	router.HandleFunc("/storage/commitID", h.GetCommitIDByName).Methods(http.MethodGet)
 }
@@ -297,6 +298,36 @@ func (h *Handler) GetCommitName(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, domain.CommitNameResponse{
 		CommitID: commitID,
 		Name:     name,
+	})
+}
+
+// GetRootCommitByRepoName handles GET /storage/rootCommit?team_id=...&repo_name=...
+func (h *Handler) GetRootCommitByRepoName(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	teamIDStr := r.URL.Query().Get("team_id")
+	teamID, err := uuid.Parse(teamIDStr)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid team_id format")
+		return
+	}
+
+	repoName := r.URL.Query().Get("repo_name")
+	if repoName == "" {
+		h.respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "repo_name is required")
+		return
+	}
+
+	rootCommit, err := h.service.GetRootCommitByRepoName(ctx, teamID, repoName)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"team_id":     teamID,
+		"repo_name":   repoName,
+		"root_commit": rootCommit,
 	})
 }
 

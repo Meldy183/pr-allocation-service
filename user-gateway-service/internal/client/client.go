@@ -692,6 +692,39 @@ func (c *CodeStorageClient) ListCommits(ctx context.Context, teamID, rootCommit 
 	return result.Commits, nil
 }
 
+// GetRootCommitByRepoName finds the root commit for a repository by its name
+func (c *CodeStorageClient) GetRootCommitByRepoName(ctx context.Context, teamID uuid.UUID, repoName string) (uuid.UUID, error) {
+	url := fmt.Sprintf("%s/storage/rootCommit?team_id=%s&repo_name=%s", c.baseURL, teamID.String(), repoName)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return uuid.Nil, fmt.Errorf("repository not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return uuid.Nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		RootCommit uuid.UUID `json:"root_commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.RootCommit, nil
+}
+
 // InitRepositoryWithName initializes a new repository with a name
 func (c *CodeStorageClient) InitRepositoryWithName(ctx context.Context, teamID uuid.UUID, repoName string, code []byte) (*CommitResponse, error) {
 	url := fmt.Sprintf("%s/storage/init", c.baseURL)
