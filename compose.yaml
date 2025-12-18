@@ -75,5 +75,17 @@ services:
       - pr-allocation-service
       - code-storage-service
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: git-simulation-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://user-gateway-service:8082
+    depends_on:
+      - user-gateway-service
+
 volumes:
   postgres_data:
