@@ -38,6 +38,77 @@ func NewService(prClient *client.PRAllocationClient, codeClient *client.CodeStor
 	}
 }
 
+// CreateTeam creates a new team
+func (s *Service) CreateTeam(ctx context.Context, req *domain.CreateTeamRequest) (*domain.Team, error) {
+	log := logger.FromContext(ctx)
+	log.Info(ctx, "creating team", zap.String("team_name", req.TeamName))
+
+	// Convert domain members to client members
+	members := make([]client.TeamMember, len(req.Members))
+	for i, m := range req.Members {
+		members[i] = client.TeamMember{
+			UserID:   m.UserID,
+			Username: m.Username,
+			IsActive: m.IsActive,
+		}
+	}
+
+	// Create team via pr-allocation-service
+	team, err := s.prClient.CreateTeam(ctx, req.TeamName, members)
+	if err != nil {
+		log.Error(ctx, "failed to create team", zap.Error(err))
+		if strings.Contains(err.Error(), "already exists") {
+			return nil, domain.ErrTeamExists
+		}
+		return nil, fmt.Errorf("failed to create team: %w", err)
+	}
+
+	// Convert response to domain
+	domainMembers := make([]domain.CreateTeamMember, len(team.Members))
+	for i, m := range team.Members {
+		domainMembers[i] = domain.CreateTeamMember{
+			UserID:   m.UserID,
+			Username: m.Username,
+			IsActive: m.IsActive,
+		}
+	}
+
+	log.Info(ctx, "team created", zap.String("team_id", team.TeamID.String()), zap.String("team_name", team.TeamName))
+	return &domain.Team{
+		TeamID:   team.TeamID,
+		TeamName: team.TeamName,
+		Members:  domainMembers,
+	}, nil
+}
+
+// GetTeam gets a team by name
+func (s *Service) GetTeam(ctx context.Context, teamName string) (*domain.Team, error) {
+	log := logger.FromContext(ctx)
+	log.Info(ctx, "getting team", zap.String("team_name", teamName))
+
+	team, err := s.prClient.GetTeam(ctx, teamName)
+	if err != nil {
+		log.Error(ctx, "failed to get team", zap.Error(err))
+		return nil, domain.ErrTeamNotFound
+	}
+
+	// Convert response to domain
+	domainMembers := make([]domain.CreateTeamMember, len(team.Members))
+	for i, m := range team.Members {
+		domainMembers[i] = domain.CreateTeamMember{
+			UserID:   m.UserID,
+			Username: m.Username,
+			IsActive: m.IsActive,
+		}
+	}
+
+	return &domain.Team{
+		TeamID:   team.TeamID,
+		TeamName: team.TeamName,
+		Members:  domainMembers,
+	}, nil
+}
+
 // GetUserProfile gets user profile by ID
 func (s *Service) GetUserProfile(ctx context.Context, userID string) (*domain.UserProfile, error) {
 	log := logger.FromContext(ctx)

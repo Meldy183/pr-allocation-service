@@ -15,6 +15,7 @@ const (
 	ErrCodeNotReviewer     = "NOT_REVIEWER"
 	ErrCodeInvalidRequest  = "INVALID_REQUEST"
 	ErrCodeInternalError   = "INTERNAL_ERROR"
+	ErrCodeTeamExists      = "TEAM_EXISTS"
 )
 
 // Domain errors
@@ -23,6 +24,7 @@ var (
 	ErrUserNotFound    = errors.New("user not found")
 	ErrUserInactive    = errors.New("user is inactive")
 	ErrTeamNotFound    = errors.New("team not found")
+	ErrTeamExists      = errors.New("team already exists")
 	ErrCommitNotFound  = errors.New("commit not found")
 	ErrPRNotFound      = errors.New("pull request not found")
 	ErrPRAlreadyExists = errors.New("pull request already exists")
@@ -64,6 +66,8 @@ func MapErrorToCode(err error) string {
 		return ErrCodeUserInactive
 	case errors.Is(err, ErrTeamNotFound):
 		return ErrCodeTeamNotFound
+	case errors.Is(err, ErrTeamExists):
+		return ErrCodeTeamExists
 	case errors.Is(err, ErrCommitNotFound):
 		return ErrCodeCommitNotFound
 	case errors.Is(err, ErrPRNotFound):

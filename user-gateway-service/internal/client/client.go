@@ -62,8 +62,59 @@ type PRResponse struct {
 	MergedAt          *time.Time `json:"mergedAt"`
 }
 
+// TeamResponse represents team response with UUID
+type TeamResponse struct {
+	TeamID   uuid.UUID    `json:"team_id"`
+	TeamName string       `json:"team_name"`
+	Members  []TeamMember `json:"members"`
+}
+
+// CreateTeam creates a new team
+func (c *PRAllocationClient) CreateTeam(ctx context.Context, teamName string, members []TeamMember) (*TeamResponse, error) {
+	url := fmt.Sprintf("%s/team/add", c.baseURL)
+
+	body := map[string]any{
+		"team_name": teamName,
+		"members":   members,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, fmt.Errorf("team already exists")
+	}
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Team TeamResponse `json:"team"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.Team, nil
+}
+
 // GetTeam gets a team by name
-func (c *PRAllocationClient) GetTeam(ctx context.Context, teamName string) (*Team, error) {
+func (c *PRAllocationClient) GetTeam(ctx context.Context, teamName string) (*TeamResponse, error) {
 	url := fmt.Sprintf("%s/team/get?team_name=%s", c.baseURL, teamName)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -78,13 +129,13 @@ func (c *PRAllocationClient) GetTeam(ctx context.Context, teamName string) (*Tea
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+		return nil, fmt.Errorf("team not found")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var team Team
+	var team TeamResponse
 	if err := json.NewDecoder(resp.Body).Decode(&team); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

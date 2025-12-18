@@ -36,6 +36,10 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	// Profile
 	router.HandleFunc("/api/me", h.GetProfile).Methods(http.MethodGet)
 
+	// Teams
+	router.HandleFunc("/api/team/create", h.CreateTeam).Methods(http.MethodPost)
+	router.HandleFunc("/api/team/get", h.GetTeam).Methods(http.MethodGet)
+
 	// Repository
 	router.HandleFunc("/api/repo/init", h.InitRepository).Methods(http.MethodPost)
 	router.HandleFunc("/api/repo/push", h.Push).Methods(http.MethodPost)
@@ -77,6 +81,67 @@ func (h *Handler) getUserID(r *http.Request) string {
 // HealthCheck handles health check
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// CreateTeam handles POST /api/team/create
+func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+	userID := h.getUserID(r)
+
+	if userID == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+		return
+	}
+
+	var req domain.CreateTeamRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error(ctx, "failed to decode request", zap.Error(err))
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid request body")
+		return
+	}
+
+	if req.TeamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
+	if len(req.Members) == 0 {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "at least one member is required")
+		return
+	}
+
+	team, err := h.service.CreateTeam(ctx, &req)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusCreated, map[string]interface{}{"team": team})
+}
+
+// GetTeam handles GET /api/team/get
+func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	userID := h.getUserID(r)
+
+	if userID == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+		return
+	}
+
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name query parameter is required")
+		return
+	}
+
+	team, err := h.service.GetTeam(ctx, teamName)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{"team": team})
 }
 
 // GetProfile handles GET /api/me
@@ -435,6 +500,8 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 		h.respondError(w, http.StatusForbidden, code, err.Error())
 	case errors.Is(err, domain.ErrTeamNotFound):
 		h.respondError(w, http.StatusNotFound, code, err.Error())
+	case errors.Is(err, domain.ErrTeamExists):
+		h.respondError(w, http.StatusBadRequest, code, err.Error())
 	case errors.Is(err, domain.ErrCommitNotFound):
 		h.respondError(w, http.StatusNotFound, code, err.Error())
 	case errors.Is(err, domain.ErrPRNotFound):

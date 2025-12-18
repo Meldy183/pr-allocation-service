@@ -10,6 +10,8 @@ info:
 tags:
   - name: Profile
     description: Информация о пользователе
+  - name: Teams
+    description: Управление командами
   - name: Repository
     description: Работа с репозиториями и коммитами
   - name: PullRequests
@@ -147,6 +149,31 @@ components:
           items:
             $ref: '#/components/schemas/PullRequest'
 
+    TeamMember:
+      type: object
+      required: [user_id, username, is_active]
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        is_active:
+          type: boolean
+
+    Team:
+      type: object
+      required: [team_id, team_name, members]
+      properties:
+        team_id:
+          type: string
+          format: uuid
+        team_name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamMember'
+
 paths:
   /health:
     get:
@@ -182,6 +209,96 @@ paths:
                     $ref: '#/components/schemas/UserProfile'
         '404':
           description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/team/create:
+    post:
+      tags: [Teams]
+      summary: Создать команду с участниками
+      description: |
+        Создаёт команду с указанными участниками.
+        Пользователь работает с именами (team_name, username), 
+        под капотом всё мапается на UUID.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_name, members]
+              properties:
+                team_name:
+                  type: string
+                  description: Уникальное имя команды
+                members:
+                  type: array
+                  items:
+                    type: object
+                    required: [user_id, username]
+                    properties:
+                      user_id:
+                        type: string
+                      username:
+                        type: string
+                      is_active:
+                        type: boolean
+                        default: true
+            example:
+              team_name: backend
+              members:
+                - user_id: alice
+                  username: Alice Smith
+                  is_active: true
+                - user_id: bob
+                  username: Bob Johnson
+                  is_active: true
+      responses:
+        '201':
+          description: Команда создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  team:
+                    $ref: '#/components/schemas/Team'
+        '400':
+          description: Команда уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/team/get:
+    get:
+      tags: [Teams]
+      summary: Получить команду по имени
+      description: Возвращает информацию о команде включая UUID и участников.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: team_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя команды
+      responses:
+        '200':
+          description: Информация о команде
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  team:
+                    $ref: '#/components/schemas/Team'
+        '404':
+          description: Команда не найдена
           content:
             application/json:
               schema:

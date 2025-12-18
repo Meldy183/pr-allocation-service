@@ -51,3 +51,23 @@ type CreatePRRequest struct {
 type RejectPRRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
+
+// CreateTeamMember is a member in CreateTeamRequest
+type CreateTeamMember struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	IsActive bool   `json:"is_active"`
+}
+
+// CreateTeamRequest is the request for creating a team
+type CreateTeamRequest struct {
+	TeamName string             `json:"team_name"`
+	Members  []CreateTeamMember `json:"members"`
+}
+
+// Team represents a team with UUID
+type Team struct {
+	TeamID   uuid.UUID          `json:"team_id"`
+	TeamName string             `json:"team_name"`
+	Members  []CreateTeamMember `json:"members"`
+}
