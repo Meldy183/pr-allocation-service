@@ -1,0 +1,1330 @@
+openapi: 3.0.3
+info:
+  title: Git Simulation Platform API
+  description: |
+    Полное API платформы для моделирования Git с Code Review.
+    
+    ## Архитектура
+    
+    Платформа состоит из трёх микросервисов:
+    
+    ### 1. User Gateway Service (порт 8082)
+    Фасад-сервис для конечных пользователей. Оркестрирует остальные сервисы,
+    валидирует права доступа. **Рекомендуется использовать этот сервис.**
+    
+    ### 2. PR Allocation Service (порт 8080)  
+    Управление командами, пользователями и Pull Requests.
+    Автоматическое назначение ревьюверов.
+    
+    ### 3. Code Storage Service (порт 8081)
+    Хранение кода в виде деревьев коммитов. 
+    Поддержка init, push, checkout, merge.
+    
+    ## Аутентификация
+    
+    Пользователь идентифицируется через заголовок `X-User-ID` (для User Gateway)
+    или через параметры запроса (для внутренних сервисов).
+
+  version: "1.0.0"
+  contact:
+    name: API Support
+
+servers:
+  - url: http://localhost:8082
+    description: User Gateway Service (рекомендуется)
+  - url: http://localhost:8080
+    description: PR Allocation Service (внутренний)
+  - url: http://localhost:8081
+    description: Code Storage Service (внутренний)
+
+tags:
+  # User Gateway Service tags
+  - name: "[Gateway] Profile"
+    description: Профиль пользователя
+  - name: "[Gateway] Repository"
+    description: Работа с репозиториями и коммитами через Gateway
+  - name: "[Gateway] Pull Requests"
+    description: Управление Pull Requests через Gateway
+
+  # PR Allocation Service tags
+  - name: "[PR-Alloc] Teams"
+    description: Управление командами
+  - name: "[PR-Alloc] Users"
+    description: Управление пользователями
+  - name: "[PR-Alloc] Pull Requests"
+    description: Управление PR (внутренний API)
+
+  # Code Storage Service tags
+  - name: "[Storage] Commits"
+    description: Работа с коммитами (внутренний API)
+
+  # Common
+  - name: Health
+    description: Health checks
+
+components:
+  parameters:
+    # User Gateway parameters
+    UserIdHeader:
+      name: X-User-ID
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Идентификатор текущего пользователя
+
+    PRIdPath:
+      name: pr_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Идентификатор Pull Request
+
+    # PR Allocation parameters
+    TeamNameQuery:
+      name: team_name
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Уникальное имя команды
+
+    UserIdQuery:
+      name: user_id
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Идентификатор пользователя
+
+    # Code Storage parameters
+    TeamIdQuery:
+      name: team_id
+      in: query
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: UUID команды
+
+    RootCommitQuery:
+      name: root_commit
+      in: query
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Корневой коммит репозитория
+
+    CommitIdQuery:
+      name: commit_id
+      in: query
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Идентификатор коммита
+
+  schemas:
+    # Common Error Response
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+      example:
+        error:
+          code: NOT_FOUND
+          message: resource not found
+
+    # User Gateway schemas
+    UserProfile:
+      type: object
+      required: [user_id, username, team_id, team_name, is_active]
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+        team_name:
+          type: string
+        is_active:
+          type: boolean
+
+    GatewayCommit:
+      type: object
+      required: [commit_id, root_commit, parent_commit_ids, created_at]
+      properties:
+        commit_id:
+          type: string
+          format: uuid
+        root_commit:
+          type: string
+          format: uuid
+        parent_commit_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        commit_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    GatewayPullRequest:
+      type: object
+      required: [pr_id, title, author_id, status, reviewer_ids, source_commit, target_commit, created_at]
+      properties:
+        pr_id:
+          type: string
+        title:
+          type: string
+        author_id:
+          type: string
+        author_name:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, MERGED, REJECTED]
+        reviewer_ids:
+          type: array
+          items:
+            type: string
+        source_commit:
+          type: string
+          format: uuid
+        target_commit:
+          type: string
+          format: uuid
+        root_commit:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        merged_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PullRequestList:
+      type: object
+      required: [pull_requests]
+      properties:
+        pull_requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/GatewayPullRequest'
+
+    # PR Allocation schemas
+    TeamMember:
+      type: object
+      required: [user_id, username, is_active]
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        is_active:
+          type: boolean
+
+    Team:
+      type: object
+      required: [team_id, team_name, members]
+      properties:
+        team_id:
+          type: string
+          format: uuid
+        team_name:
+          type: string
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamMember'
+
+    User:
+      type: object
+      required: [user_id, username, team_id, team_name, is_active]
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+        team_name:
+          type: string
+        is_active:
+          type: boolean
+
+    PullRequest:
+      type: object
+      required: [pull_request_id, pull_request_name, author_id, status, assigned_reviewers]
+      properties:
+        pull_request_id:
+          type: string
+        pull_request_name:
+          type: string
+        author_id:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, MERGED]
+        assigned_reviewers:
+          type: array
+          items:
+            type: string
+          description: user_id назначенных ревьюверов (0..2)
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        mergedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    PullRequestShort:
+      type: object
+      required: [pull_request_id, pull_request_name, author_id, status]
+      properties:
+        pull_request_id:
+          type: string
+        pull_request_name:
+          type: string
+        author_id:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, MERGED]
+
+    # Code Storage schemas
+    StorageCommit:
+      type: object
+      required: [commit_id, team_id, root_commit, parent_commit_ids, createdAt]
+      properties:
+        commit_id:
+          type: string
+          format: uuid
+        team_id:
+          type: string
+          format: uuid
+        root_commit:
+          type: string
+          format: uuid
+        parent_commit_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: |
+            Родительские коммиты.
+            0 — для root commit,
+            1 — для push,
+            2 — для merge
+        createdAt:
+          type: string
+          format: date-time
+        commit_name:
+          type: string
+          nullable: true
+          description: Человекочитаемое имя коммита
+
+paths:
+  # ============================================================
+  # HEALTH CHECKS
+  # ============================================================
+
+  /health:
+    get:
+      tags: [Health]
+      summary: "[Gateway] Health check"
+      servers:
+        - url: http://localhost:8082
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  # ============================================================
+  # USER GATEWAY SERVICE - Profile
+  # ============================================================
+
+  /api/me:
+    get:
+      tags: ["[Gateway] Profile"]
+      summary: Получить профиль текущего пользователя
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      responses:
+        '200':
+          description: Профиль пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+        '404':
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # USER GATEWAY SERVICE - Repository
+  # ============================================================
+
+  /api/repo/init:
+    post:
+      tags: ["[Gateway] Repository"]
+      summary: Инициализировать новый репозиторий
+      description: Создаёт root commit с начальным кодом. Пользователь должен быть активным.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [team_id, code]
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                  description: UUID команды
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с исходным кодом (≤ 100MB)
+      responses:
+        '201':
+          description: Репозиторий инициализирован
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/GatewayCommit'
+        '403':
+          description: Пользователь неактивен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Пользователь или команда не найдены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/repo/push:
+    post:
+      tags: ["[Gateway] Repository"]
+      summary: Создать новый коммит
+      description: Создаёт коммит поверх существующего. Проверяет доступ к репозиторию.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [team_id, root_commit, parent_commit, code]
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                root_commit:
+                  type: string
+                  format: uuid
+                  description: Идентификатор репозитория (root commit)
+                parent_commit:
+                  type: string
+                  format: uuid
+                  description: Родительский коммит
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с кодом (≤ 100MB)
+      responses:
+        '201':
+          description: Коммит создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/GatewayCommit'
+        '403':
+          description: Нет доступа к репозиторию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Репозиторий или родительский коммит не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/repo/checkout:
+    get:
+      tags: ["[Gateway] Repository"]
+      summary: Получить код коммита
+      description: Возвращает ZIP архив с кодом. Проверяет доступ к репозиторию.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: root_commit
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Идентификатор репозитория
+        - name: commit_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Идентификатор коммита
+      responses:
+        '200':
+          description: ZIP архив с кодом
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Нет доступа к репозиторию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Коммит не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # USER GATEWAY SERVICE - Pull Requests
+  # ============================================================
+
+  /api/pr/create:
+    post:
+      tags: ["[Gateway] Pull Requests"]
+      summary: Создать Pull Request
+      description: |
+        Создаёт PR и автоматически назначает ревьюверов из команды.
+        Проверяет доступ к репозиторию.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, root_commit, source_commit, target_commit]
+              properties:
+                title:
+                  type: string
+                  description: Название PR
+                root_commit:
+                  type: string
+                  format: uuid
+                  description: Идентификатор репозитория
+                source_commit:
+                  type: string
+                  format: uuid
+                  description: Коммит с изменениями (откуда мержим)
+                target_commit:
+                  type: string
+                  format: uuid
+                  description: Целевой коммит (куда мержим)
+            example:
+              title: "Add user authentication"
+              root_commit: "123e4567-e89b-12d3-a456-426614174000"
+              source_commit: "123e4567-e89b-12d3-a456-426614174001"
+              target_commit: "123e4567-e89b-12d3-a456-426614174002"
+      responses:
+        '201':
+          description: PR создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pull_request:
+                    $ref: '#/components/schemas/GatewayPullRequest'
+        '403':
+          description: Нет доступа к репозиторию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: PR уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/my:
+    get:
+      tags: ["[Gateway] Pull Requests"]
+      summary: Получить мои Pull Requests
+      description: Возвращает список PR, где текущий пользователь является автором.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, MERGED, REJECTED]
+          description: Фильтр по статусу
+      responses:
+        '200':
+          description: Список PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestList'
+
+  /api/pr/reviews:
+    get:
+      tags: ["[Gateway] Pull Requests"]
+      summary: Получить PR на ревью
+      description: Возвращает список PR, где текущий пользователь назначен ревьювером.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, MERGED, REJECTED]
+          description: Фильтр по статусу
+      responses:
+        '200':
+          description: Список PR на ревью
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestList'
+
+  /api/pr/{pr_id}/approve:
+    post:
+      tags: ["[Gateway] Pull Requests"]
+      summary: Одобрить PR
+      description: |
+        Одобряет PR и автоматически выполняет merge коммитов в code-storage.
+        Только назначенный ревьювер может одобрить PR.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/PRIdPath'
+      responses:
+        '200':
+          description: PR одобрен и смержен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pull_request:
+                    $ref: '#/components/schemas/GatewayPullRequest'
+                  merge_commit:
+                    $ref: '#/components/schemas/GatewayCommit'
+        '403':
+          description: Пользователь не является ревьювером этого PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: PR уже смержен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/{pr_id}/reject:
+    post:
+      tags: ["[Gateway] Pull Requests"]
+      summary: Отклонить PR
+      description: Отклоняет PR. Только назначенный ревьювер может отклонить PR.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/PRIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Причина отклонения
+      responses:
+        '200':
+          description: PR отклонён
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pull_request:
+                    $ref: '#/components/schemas/GatewayPullRequest'
+        '403':
+          description: Пользователь не является ревьювером этого PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/{pr_id}/code:
+    get:
+      tags: ["[Gateway] Pull Requests"]
+      summary: Получить код PR
+      description: Возвращает ZIP архив с кодом source commit PR. Для ревью.
+      servers:
+        - url: http://localhost:8082
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/PRIdPath'
+      responses:
+        '200':
+          description: ZIP архив с кодом
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Нет доступа к PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # PR ALLOCATION SERVICE - Teams
+  # ============================================================
+
+  /team/add:
+    post:
+      tags: ["[PR-Alloc] Teams"]
+      summary: Создать команду с участниками
+      servers:
+        - url: http://localhost:8080
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_name, members]
+              properties:
+                team_name:
+                  type: string
+                members:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TeamMember'
+            example:
+              team_name: backend
+              members:
+                - user_id: u1
+                  username: Alice
+                  is_active: true
+                - user_id: u2
+                  username: Bob
+                  is_active: true
+      responses:
+        '201':
+          description: Команда создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  team:
+                    $ref: '#/components/schemas/Team'
+        '400':
+          description: Команда уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team/get:
+    get:
+      tags: ["[PR-Alloc] Teams"]
+      summary: Получить команду с участниками
+      servers:
+        - url: http://localhost:8080
+      parameters:
+        - $ref: '#/components/parameters/TeamNameQuery'
+      responses:
+        '200':
+          description: Объект команды
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+        '404':
+          description: Команда не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /team/resolve:
+    get:
+      tags: ["[PR-Alloc] Teams"]
+      summary: Получить UUID команды по имени
+      servers:
+        - url: http://localhost:8080
+      parameters:
+        - $ref: '#/components/parameters/TeamNameQuery'
+      responses:
+        '200':
+          description: UUID команды
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  team_name:
+                    type: string
+                  team_id:
+                    type: string
+                    format: uuid
+        '404':
+          description: Команда не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # PR ALLOCATION SERVICE - Users
+  # ============================================================
+
+  /users/get:
+    get:
+      tags: ["[PR-Alloc] Users"]
+      summary: Получить пользователя по ID
+      servers:
+        - url: http://localhost:8080
+      parameters:
+        - $ref: '#/components/parameters/UserIdQuery'
+      responses:
+        '200':
+          description: Пользователь
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+        '404':
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/setIsActive:
+    post:
+      tags: ["[PR-Alloc] Users"]
+      summary: Установить флаг активности пользователя
+      servers:
+        - url: http://localhost:8080
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, is_active]
+              properties:
+                user_id:
+                  type: string
+                is_active:
+                  type: boolean
+            example:
+              user_id: u2
+              is_active: false
+      responses:
+        '200':
+          description: Обновлённый пользователь
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+        '404':
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/getReview:
+    get:
+      tags: ["[PR-Alloc] Users"]
+      summary: Получить PR'ы, где пользователь назначен ревьювером
+      servers:
+        - url: http://localhost:8080
+      parameters:
+        - $ref: '#/components/parameters/UserIdQuery'
+      responses:
+        '200':
+          description: Список PR'ов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                  pull_requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PullRequestShort'
+
+  # ============================================================
+  # PR ALLOCATION SERVICE - Pull Requests
+  # ============================================================
+
+  /pullRequest/create:
+    post:
+      tags: ["[PR-Alloc] Pull Requests"]
+      summary: Создать PR и назначить ревьюверов
+      servers:
+        - url: http://localhost:8080
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pull_request_id, pull_request_name, author_id]
+              properties:
+                pull_request_id:
+                  type: string
+                pull_request_name:
+                  type: string
+                author_id:
+                  type: string
+            example:
+              pull_request_id: pr-1001
+              pull_request_name: Add search
+              author_id: u1
+      responses:
+        '201':
+          description: PR создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pr:
+                    $ref: '#/components/schemas/PullRequest'
+        '404':
+          description: Автор/команда не найдены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: PR уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pullRequest/merge:
+    post:
+      tags: ["[PR-Alloc] Pull Requests"]
+      summary: Пометить PR как MERGED
+      servers:
+        - url: http://localhost:8080
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pull_request_id]
+              properties:
+                pull_request_id:
+                  type: string
+            example:
+              pull_request_id: pr-1001
+      responses:
+        '200':
+          description: PR в состоянии MERGED
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pr:
+                    $ref: '#/components/schemas/PullRequest'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /pullRequest/reassign:
+    post:
+      tags: ["[PR-Alloc] Pull Requests"]
+      summary: Переназначить ревьювера
+      servers:
+        - url: http://localhost:8080
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pull_request_id, old_user_id]
+              properties:
+                pull_request_id:
+                  type: string
+                old_user_id:
+                  type: string
+            example:
+              pull_request_id: pr-1001
+              old_user_id: u2
+      responses:
+        '200':
+          description: Переназначение выполнено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pr:
+                    $ref: '#/components/schemas/PullRequest'
+                  replaced_by:
+                    type: string
+                    description: user_id нового ревьювера
+        '404':
+          description: PR или пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Нарушение правил переназначения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ============================================================
+  # CODE STORAGE SERVICE - Commits
+  # ============================================================
+
+  /storage/init:
+    post:
+      tags: ["[Storage] Commits"]
+      summary: Инициализировать репозиторий (создать root commit)
+      servers:
+        - url: http://localhost:8081
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [team_id, code]
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с исходным кодом (≤ 100MB)
+      responses:
+        '200':
+          description: Репозиторий инициализирован
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/StorageCommit'
+        '404':
+          description: Команда не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /storage/push:
+    post:
+      tags: ["[Storage] Commits"]
+      summary: Создать новый коммит
+      servers:
+        - url: http://localhost:8081
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [team_id, root_commit, commit_id, code]
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                root_commit:
+                  type: string
+                  format: uuid
+                commit_id:
+                  type: string
+                  format: uuid
+                  description: Родительский коммит
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с кодом (≤ 100MB)
+      responses:
+        '201':
+          description: Коммит создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/StorageCommit'
+        '404':
+          description: Коммит или репозиторий не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /storage/checkout:
+    get:
+      tags: ["[Storage] Commits"]
+      summary: Получить код коммита
+      servers:
+        - url: http://localhost:8081
+      parameters:
+        - $ref: '#/components/parameters/TeamIdQuery'
+        - $ref: '#/components/parameters/RootCommitQuery'
+        - $ref: '#/components/parameters/CommitIdQuery'
+      responses:
+        '200':
+          description: ZIP архив с кодом
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Коммит не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /storage/merge:
+    post:
+      tags: ["[Storage] Commits"]
+      summary: Смёржить два leaf-коммита
+      servers:
+        - url: http://localhost:8081
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_id, root_commit, commit_id1, commit_id2]
+              properties:
+                team_id:
+                  type: string
+                  format: uuid
+                root_commit:
+                  type: string
+                  format: uuid
+                commit_id1:
+                  type: string
+                  format: uuid
+                commit_id2:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Merge-коммит создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/StorageCommit'
+        '404':
+          description: Коммиты или репозиторий не найдены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Нарушение правил merge (не leaf-коммиты)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /storage/commitName/{commit_id}:
+    get:
+      tags: ["[Storage] Commits"]
+      summary: Получить имя коммита по ID
+      servers:
+        - url: http://localhost:8081
+      parameters:
+        - name: commit_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Имя коммита
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit_id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+        '404':
+          description: Коммит не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /storage/commitID:
+    get:
+      tags: ["[Storage] Commits"]
+      summary: Получить commit_id по имени
+      servers:
+        - url: http://localhost:8081
+      parameters:
+        - $ref: '#/components/parameters/TeamIdQuery'
+        - $ref: '#/components/parameters/RootCommitQuery'
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя коммита
+      responses:
+        '200':
+          description: Найденный commit_id
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commit_id:
+                    type: string
+                    format: uuid
+        '404':
+          description: Коммит с таким именем не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
