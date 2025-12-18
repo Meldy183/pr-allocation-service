@@ -1,4 +1,4 @@
-po-- Create teams table with UUID
+-- Create teams table with UUID
 CREATE TABLE IF NOT EXISTS teams (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     team_name VARCHAR(255) UNIQUE NOT NULL,
