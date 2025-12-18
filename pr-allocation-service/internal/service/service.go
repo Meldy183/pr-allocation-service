@@ -67,7 +67,12 @@ func (s *Service) SetUserActive(ctx context.Context, req *domain.SetUserActiveRe
 	return user, nil
 }
 
-// CreatePR creates PR and auto-assigns up to 2 reviewers (POST /pullRequest/create).
+// GetPR returns a PR by ID.
+func (s *Service) GetPR(ctx context.Context, prID string) (*domain.PullRequest, error) {
+	return s.storage.GetPR(ctx, prID)
+}
+
+// CreatePR creates PR and auto-assigns 1 reviewer (POST /pullRequest/create).
 func (s *Service) CreatePR(ctx context.Context, req *domain.CreatePRRequest) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
 	log.Info(ctx, "creating PR", zap.String("pr_id", req.PullRequestID), zap.String("author_id", req.AuthorID))
@@ -89,7 +94,7 @@ func (s *Service) CreatePR(ctx context.Context, req *domain.CreatePRRequest) (*d
 	if err != nil {
 		return nil, fmt.Errorf("failed to get team members: %w", err)
 	}
-	reviewers := s.selectReviewers(teamMembers, author.UserID, 2)
+	reviewers := s.selectReviewers(teamMembers, author.UserID, 1)
 	pr := &domain.PullRequest{
 		PullRequestID:     req.PullRequestID,
 		PullRequestName:   req.PullRequestName,
@@ -109,7 +114,7 @@ func (s *Service) CreatePR(ctx context.Context, req *domain.CreatePRRequest) (*d
 	return pr, nil
 }
 
-// MergePR marks PR as MERGED (POST /pullRequest/merge) - idempotent.
+// MergePR marks PR as MERGED (POST /pullRequest/merge) - only if all reviewers approved.
 func (s *Service) MergePR(ctx context.Context, req *domain.MergePRRequest) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
 	log.Info(ctx, "merging PR", zap.String("pr_id", req.PullRequestID))
@@ -121,6 +126,13 @@ func (s *Service) MergePR(ctx context.Context, req *domain.MergePRRequest) (*dom
 		log.Info(ctx, "PR already merged", zap.String("pr_id", req.PullRequestID))
 		return pr, nil
 	}
+	if pr.Status == domain.StatusRejected {
+		return nil, fmt.Errorf("%s: PR was rejected", domain.ErrPRRejected)
+	}
+	// Check if all reviewers approved
+	if !s.allReviewersApproved(pr) {
+		return nil, fmt.Errorf("%s: not all reviewers have approved", domain.ErrNotAllApproved)
+	}
 	pr.Status = domain.StatusMerged
 	if pr.MergedAt == nil {
 		now := time.Now()
@@ -131,6 +143,111 @@ func (s *Service) MergePR(ctx context.Context, req *domain.MergePRRequest) (*dom
 		return nil, err
 	}
 	return pr, nil
+}
+
+// ApprovePR adds reviewer's approval to PR.
+func (s *Service) ApprovePR(ctx context.Context, req *domain.ApprovePRRequest) (*domain.PullRequest, bool, error) {
+	log := logger.FromContext(ctx)
+	log.Info(ctx, "approving PR", zap.String("pr_id", req.PullRequestID), zap.String("reviewer_id", req.ReviewerID))
+
+	pr, err := s.storage.GetPR(ctx, req.PullRequestID)
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: PR not found", domain.ErrNotFound)
+	}
+
+	if pr.Status != domain.StatusOpen {
+		return nil, false, fmt.Errorf("%s: PR is not open", domain.ErrPRNotOpen)
+	}
+
+	// Check if reviewer is assigned
+	isAssigned := false
+	for _, r := range pr.AssignedReviewers {
+		if r == req.ReviewerID {
+			isAssigned = true
+			break
+		}
+	}
+	if !isAssigned {
+		return nil, false, fmt.Errorf("%s: reviewer is not assigned to this PR", domain.ErrNotAssigned)
+	}
+
+	// Check if already approved
+	for _, a := range pr.ApprovedBy {
+		if a == req.ReviewerID {
+			// Already approved, return current state
+			return pr, s.allReviewersApproved(pr), nil
+		}
+	}
+
+	// Add approval
+	pr.ApprovedBy = append(pr.ApprovedBy, req.ReviewerID)
+
+	if err := s.storage.UpdatePR(ctx, pr); err != nil {
+		log.Error(ctx, "failed to approve PR", zap.Error(err))
+		return nil, false, err
+	}
+
+	allApproved := s.allReviewersApproved(pr)
+	log.Info(ctx, "PR approved by reviewer",
+		zap.String("pr_id", req.PullRequestID),
+		zap.String("reviewer_id", req.ReviewerID),
+		zap.Bool("all_approved", allApproved))
+
+	return pr, allApproved, nil
+}
+
+// RejectPR marks PR as rejected.
+func (s *Service) RejectPR(ctx context.Context, req *domain.RejectPRRequest) (*domain.PullRequest, error) {
+	log := logger.FromContext(ctx)
+	log.Info(ctx, "rejecting PR", zap.String("pr_id", req.PullRequestID), zap.String("reviewer_id", req.ReviewerID))
+
+	pr, err := s.storage.GetPR(ctx, req.PullRequestID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: PR not found", domain.ErrNotFound)
+	}
+
+	if pr.Status != domain.StatusOpen {
+		return nil, fmt.Errorf("%s: PR is not open", domain.ErrPRNotOpen)
+	}
+
+	// Check if reviewer is assigned
+	isAssigned := false
+	for _, r := range pr.AssignedReviewers {
+		if r == req.ReviewerID {
+			isAssigned = true
+			break
+		}
+	}
+	if !isAssigned {
+		return nil, fmt.Errorf("%s: reviewer is not assigned to this PR", domain.ErrNotAssigned)
+	}
+
+	pr.Status = domain.StatusRejected
+
+	if err := s.storage.UpdatePR(ctx, pr); err != nil {
+		log.Error(ctx, "failed to reject PR", zap.Error(err))
+		return nil, err
+	}
+
+	log.Info(ctx, "PR rejected", zap.String("pr_id", req.PullRequestID), zap.String("reviewer_id", req.ReviewerID))
+	return pr, nil
+}
+
+// allReviewersApproved checks if all assigned reviewers have approved.
+func (s *Service) allReviewersApproved(pr *domain.PullRequest) bool {
+	if len(pr.AssignedReviewers) == 0 {
+		return true // No reviewers required
+	}
+	approvedSet := make(map[string]bool)
+	for _, a := range pr.ApprovedBy {
+		approvedSet[a] = true
+	}
+	for _, r := range pr.AssignedReviewers {
+		if !approvedSet[r] {
+			return false
+		}
+	}
+	return true
 }
 
 // ReassignReviewer replaces one reviewer with random active from their team.

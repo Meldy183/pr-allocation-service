@@ -37,8 +37,9 @@ type Team struct {
 type PRStatus string
 
 const (
-	StatusOpen   PRStatus = "OPEN"
-	StatusMerged PRStatus = "MERGED"
+	StatusOpen     PRStatus = "OPEN"
+	StatusMerged   PRStatus = "MERGED"
+	StatusRejected PRStatus = "REJECTED"
 )
 
 // PullRequest represents a PR.
@@ -48,16 +49,19 @@ type PullRequest struct {
 	AuthorID          string     `json:"author_id"`
 	Status            PRStatus   `json:"status"`
 	AssignedReviewers []string   `json:"assigned_reviewers"`
+	ApprovedBy        []string   `json:"approved_by,omitempty"`
 	CreatedAt         *time.Time `json:"createdAt,omitempty"`
 	MergedAt          *time.Time `json:"mergedAt,omitempty"`
 }
 
 // PullRequestShort for list responses.
 type PullRequestShort struct {
-	PullRequestID   string   `json:"pull_request_id"`
-	PullRequestName string   `json:"pull_request_name"`
-	AuthorID        string   `json:"author_id"`
-	Status          PRStatus `json:"status"`
+	PullRequestID     string   `json:"pull_request_id"`
+	PullRequestName   string   `json:"pull_request_name"`
+	AuthorID          string   `json:"author_id"`
+	Status            PRStatus `json:"status"`
+	AssignedReviewers []string `json:"assigned_reviewers"`
+	ApprovedBy        []string `json:"approved_by,omitempty"`
 }
 
 // CreateTeamRequest - POST /team/add.
@@ -82,6 +86,19 @@ type CreatePRRequest struct {
 // MergePRRequest - POST /pullRequest/merge.
 type MergePRRequest struct {
 	PullRequestID string `json:"pull_request_id"`
+}
+
+// ApprovePRRequest - POST /pullRequest/approve.
+type ApprovePRRequest struct {
+	PullRequestID string `json:"pull_request_id"`
+	ReviewerID    string `json:"reviewer_id"`
+}
+
+// RejectPRRequest - POST /pullRequest/reject.
+type RejectPRRequest struct {
+	PullRequestID string `json:"pull_request_id"`
+	ReviewerID    string `json:"reviewer_id"`
+	Reason        string `json:"reason,omitempty"`
 }
 
 // ReassignRequest - POST /pullRequest/reassign.
@@ -144,8 +161,11 @@ const (
 	ErrTeamExists     = "TEAM_EXISTS"
 	ErrPRExists       = "PR_EXISTS"
 	ErrPRMerged       = "PR_MERGED"
+	ErrPRRejected     = "PR_REJECTED"
+	ErrPRNotOpen      = "PR_NOT_OPEN"
 	ErrNotAssigned    = "NOT_ASSIGNED"
 	ErrNoCandidate    = "NO_CANDIDATE"
 	ErrNotFound       = "NOT_FOUND"
 	ErrInvalidRequest = "INVALID_REQUEST"
+	ErrNotAllApproved = "NOT_ALL_APPROVED"
 )

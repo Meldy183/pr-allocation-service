@@ -71,6 +71,28 @@ function App() {
       if (userProfile.team_name) {
         const teamData = await api.getTeam(username, userProfile.team_name);
         setTeam(teamData);
+
+        // Try to load saved repo from localStorage
+        const savedRepo = localStorage.getItem(`repo_${username}`);
+        if (savedRepo) {
+          setCurrentRepo(savedRepo);
+          // Load commits for the saved repo
+          try {
+            const repoCommits = await api.listCommits(username, userProfile.team_name, savedRepo);
+            const commitNodes: CommitNode[] = repoCommits.map((c) => ({
+              id: c.commit_id || '',
+              name: c.commit_name || '',
+              parentIds: c.parent_commit_ids || [],
+              isRoot: c.commit_id === c.root_commit,
+              isMerge: (c.parent_commit_ids?.length || 0) > 1,
+              branch: 'main',
+            }));
+            setCommits(commitNodes);
+          } catch (e) {
+            // Repo might not exist anymore
+            localStorage.removeItem(`repo_${username}`);
+          }
+        }
       }
 
       // Load PRs
@@ -154,6 +176,8 @@ function App() {
       };
       setCommits([newCommit]);
       setCurrentRepo(newRepoName);
+      // Save to localStorage for persistence
+      localStorage.setItem(`repo_${username}`, newRepoName);
       setNewRepoName('');
       setInitCommitName('main');
     } catch (err: any) {
@@ -186,7 +210,13 @@ function App() {
         parentIds: commit.parent_commit_ids || [],
         branch: newCommitName.includes('feature') ? newCommitName : 'main',
       };
-      setCommits([newCommit, ...commits]);
+      // Avoid duplicates - only add if commit doesn't already exist
+      setCommits((prev) => {
+        if (prev.some(c => c.id === newCommit.id)) {
+          return prev;
+        }
+        return [newCommit, ...prev];
+      });
       setNewCommitName('');
       setParentCommitName('');
     } catch (err: any) {
@@ -244,38 +274,60 @@ function App() {
   };
 
   const handleApprovePR = async (pr: api.PullRequest) => {
-    if (!pr.team_name) return;
+    if (!pr.team_name || !pr.pr_name) return;
     setLoading(true);
+    setError(null);
     try {
       const result = await api.approvePR(username, pr.team_name, pr.pr_name);
-      // Update PR in list
-      setReviewPRs(reviewPRs.map((p) => (p.pr_name === pr.pr_name ? result.pull_request : p)));
-      // Add merge commit
-      if (result.merge_commit) {
-        const mergeCommit: CommitNode = {
-          id: result.merge_commit.commit_id || '',
-          name: `merge-${pr.pr_name}`,
-          parentIds: result.merge_commit.parent_commit_ids || [],
-          isMerge: true,
-          branch: 'main',
-        };
-        setCommits([mergeCommit, ...commits]);
+      // Update PR in list if we got valid result
+      if (result && result.pull_request) {
+        setReviewPRs((prev) => prev.map((p) => (p.pr_name === pr.pr_name ? result.pull_request : p)));
+        // Add merge commit if provided (all reviewers approved)
+        if (result.merge_commit && result.merge_commit.commit_id) {
+          const mergeCommit: CommitNode = {
+            id: result.merge_commit.commit_id,
+            name: `merge-${pr.pr_name}`,
+            parentIds: result.merge_commit.parent_commit_ids || [],
+            isMerge: true,
+            branch: 'main',
+          };
+          setCommits((prev) => {
+            // Avoid duplicates
+            if (prev.some(c => c.id === mergeCommit.id)) {
+              return prev;
+            }
+            return [mergeCommit, ...prev];
+          });
+        }
       }
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Failed to approve PR');
     } finally {
       setLoading(false);
     }
   };
 
   const handleRejectPR = async (pr: api.PullRequest) => {
-    if (!pr.team_name) return;
+    if (!pr.team_name || !pr.pr_name) return;
     setLoading(true);
+    setError(null);
     try {
       const result = await api.rejectPR(username, pr.team_name, pr.pr_name, 'Rejected via UI');
-      setReviewPRs(reviewPRs.map((p) => (p.pr_name === pr.pr_name ? result : p)));
+      // Only update if we got a valid result
+      if (result && result.pr_name) {
+        setReviewPRs((prev) => prev.map((p) => (p.pr_name === pr.pr_name ? result : p)));
+      } else {
+        // If no valid result, just mark as rejected locally
+        setReviewPRs((prev) => prev.map((p) =>
+          p.pr_name === pr.pr_name ? { ...p, status: 'REJECTED' } : p
+        ));
+      }
     } catch (err: any) {
-      setError(err.message);
+      // On error, still update UI to show rejection attempted
+      setReviewPRs((prev) => prev.map((p) =>
+        p.pr_name === pr.pr_name ? { ...p, status: 'REJECTED' } : p
+      ));
+      setError(err.message || 'Failed to reject PR');
     } finally {
       setLoading(false);
     }

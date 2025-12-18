@@ -38,6 +38,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	router.HandleFunc("/storage/push", h.Push).Methods(http.MethodPost)
 	router.HandleFunc("/storage/checkout", h.Checkout).Methods(http.MethodGet)
 	router.HandleFunc("/storage/merge", h.Merge).Methods(http.MethodPost)
+	router.HandleFunc("/storage/commits", h.ListCommits).Methods(http.MethodGet)
 	router.HandleFunc("/storage/commitName/{commit_id}", h.GetCommitName).Methods(http.MethodGet)
 	router.HandleFunc("/storage/commitID", h.GetCommitIDByName).Methods(http.MethodGet)
 }
@@ -240,6 +241,39 @@ func (h *Handler) Merge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.respondJSON(w, http.StatusCreated, domain.CommitResponse{Commit: commit.ToDTO()})
+}
+
+// ListCommits handles GET /storage/commits?team_id=...&root_commit=...
+func (h *Handler) ListCommits(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	teamIDStr := r.URL.Query().Get("team_id")
+	teamID, err := uuid.Parse(teamIDStr)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid team_id format")
+		return
+	}
+
+	rootCommitStr := r.URL.Query().Get("root_commit")
+	rootCommit, err := uuid.Parse(rootCommitStr)
+	if err != nil {
+		h.respondError(w, http.StatusBadRequest, "INVALID_REQUEST", "invalid root_commit format")
+		return
+	}
+
+	commits, err := h.service.ListCommits(ctx, teamID, rootCommit)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	// Convert to DTOs
+	dtos := make([]*domain.CommitDTO, len(commits))
+	for i, c := range commits {
+		dtos[i] = c.ToDTO()
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{"commits": dtos})
 }
 
 // GetCommitName handles GET /storage/commitName/{commit_id}

@@ -78,6 +78,16 @@ export function PRList({ pullRequests, title, isReviewer, onApprove, onReject, o
                           {pr.target_commit_name}
                         </span>
                       </div>
+                      {pr.reviewer_ids && pr.reviewer_ids.length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-400">Reviewer:</span>
+                          {pr.reviewer_ids.map((r) => (
+                            <Badge key={r} variant="outline" className="text-xs">
+                              {r}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/Meldy183/shared/pkg/logger"
 	"github.com/Meldy183/user-gateway-service/internal/client"
@@ -293,6 +292,66 @@ func (s *Service) Checkout(ctx context.Context, username, teamName, repoName, co
 	return code, nil
 }
 
+// ListCommits lists all commits for a repository using names
+func (s *Service) ListCommits(ctx context.Context, username, teamName, repoName string) ([]domain.Commit, error) {
+	log := logger.FromContext(ctx)
+
+	// Verify user access
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, err
+	}
+
+	// Resolve team name to UUID
+	teamID, err := s.prClient.ResolveTeamID(ctx, teamName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve team", zap.Error(err))
+		return nil, domain.ErrTeamNotFound
+	}
+
+	// Get root commit from cache
+	rootCommit, ok := s.getRootCommit(teamID, repoName)
+	if !ok {
+		log.Error(ctx, "repository not found in cache", zap.String("repo", repoName))
+		return nil, domain.ErrCommitNotFound
+	}
+
+	// List commits from code-storage
+	commits, err := s.codeClient.ListCommits(ctx, teamID, rootCommit)
+	if err != nil {
+		log.Error(ctx, "failed to list commits", zap.Error(err))
+		return nil, fmt.Errorf("failed to list commits: %w", err)
+	}
+
+	// Convert to domain commits
+	result := make([]domain.Commit, len(commits))
+	for i, c := range commits {
+		commitName := ""
+		if c.CommitName != nil {
+			commitName = *c.CommitName
+		}
+		result[i] = domain.Commit{
+			CommitID:        c.CommitID,
+			RootCommit:      c.RootCommit,
+			ParentCommitIDs: c.ParentCommitIDs,
+			CommitName:      &commitName,
+			RepoName:        &repoName,
+			CreatedAt:       c.CreatedAt,
+		}
+		// Mark root commit
+		if c.CommitID == rootCommit {
+			result[i].CommitName = &commitName
+		}
+	}
+
+	log.Info(ctx, "listed commits",
+		zap.String("username", username),
+		zap.String("repo", repoName),
+		zap.Int("count", len(result)),
+	)
+
+	return result, nil
+}
+
 // CreatePR creates a new pull request using names
 func (s *Service) CreatePR(ctx context.Context, username string, req *domain.CreatePRRequest) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
@@ -474,7 +533,7 @@ func (s *Service) GetReviewPRs(ctx context.Context, username string, status stri
 	return result, nil
 }
 
-// ApprovePR approves a PR and triggers merge using names
+// ApprovePR approves a PR and triggers merge if all approved using names
 func (s *Service) ApprovePR(ctx context.Context, username, teamName, prName string) (*domain.PullRequest, *domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
@@ -490,15 +549,6 @@ func (s *Service) ApprovePR(ctx context.Context, username, teamName, prName stri
 		return nil, nil, err
 	}
 
-	// TODO: Verify user is a reviewer (would check pr-allocation-service)
-
-	// Merge commits in code-storage
-	mergeCommit, err := s.codeClient.Merge(ctx, meta.TeamID, meta.RootCommit, meta.SourceCommit, meta.TargetCommit)
-	if err != nil {
-		log.Error(ctx, "failed to merge commits", zap.Error(err))
-		return nil, nil, fmt.Errorf("failed to merge: %w", err)
-	}
-
 	// Find PR ID for pr-allocation-service
 	var prID string
 	for key, m := range s.prMetadata {
@@ -508,21 +558,20 @@ func (s *Service) ApprovePR(ctx context.Context, username, teamName, prName stri
 		}
 	}
 	if prID == "" {
-		// Generate one if not found
-		prID = fmt.Sprintf("pr-%s", uuid.New().String()[:8])
+		return nil, nil, domain.ErrPRNotFound
 	}
 
-	// Mark PR as merged in pr-allocation-service
-	prResp, err := s.prClient.MergePR(ctx, prID)
+	// Approve PR in pr-allocation-service
+	prResp, allApproved, err := s.prClient.ApprovePR(ctx, prID, username)
 	if err != nil {
-		log.Error(ctx, "failed to mark PR as merged", zap.Error(err))
-		return nil, nil, fmt.Errorf("failed to update PR status: %w", err)
+		log.Error(ctx, "failed to approve PR", zap.Error(err))
+		return nil, nil, fmt.Errorf("failed to approve PR: %w", err)
 	}
 
-	log.Info(ctx, "PR approved and merged",
+	log.Info(ctx, "PR approved",
 		zap.String("pr_name", prName),
 		zap.String("reviewer", username),
-		zap.String("merge_commit", mergeCommit.CommitID.String()),
+		zap.Bool("all_approved", allApproved),
 	)
 
 	pr := &domain.PullRequest{
@@ -543,15 +592,41 @@ func (s *Service) ApprovePR(ctx context.Context, username, teamName, prName stri
 		MergedAt:         prResp.MergedAt,
 	}
 
-	commit := &domain.Commit{
-		CommitID:        mergeCommit.CommitID,
-		RootCommit:      mergeCommit.RootCommit,
-		ParentCommitIDs: mergeCommit.ParentCommitIDs,
-		RepoName:        &meta.RepoName,
-		CreatedAt:       mergeCommit.CreatedAt,
+	// If all reviewers approved, merge the code
+	if allApproved {
+		mergeCommit, err := s.codeClient.Merge(ctx, meta.TeamID, meta.RootCommit, meta.SourceCommit, meta.TargetCommit)
+		if err != nil {
+			log.Error(ctx, "failed to merge commits", zap.Error(err))
+			return nil, nil, fmt.Errorf("failed to merge: %w", err)
+		}
+
+		// Mark PR as merged in pr-allocation-service
+		prResp, err = s.prClient.MergePR(ctx, prID)
+		if err != nil {
+			log.Error(ctx, "failed to mark PR as merged", zap.Error(err))
+			return nil, nil, fmt.Errorf("failed to update PR status: %w", err)
+		}
+
+		pr.Status = prResp.Status
+		pr.MergedAt = prResp.MergedAt
+
+		log.Info(ctx, "PR merged",
+			zap.String("pr_name", prName),
+			zap.String("merge_commit", mergeCommit.CommitID.String()),
+		)
+
+		commit := &domain.Commit{
+			CommitID:        mergeCommit.CommitID,
+			RootCommit:      mergeCommit.RootCommit,
+			ParentCommitIDs: mergeCommit.ParentCommitIDs,
+			RepoName:        &meta.RepoName,
+			CreatedAt:       mergeCommit.CreatedAt,
+		}
+
+		return pr, commit, nil
 	}
 
-	return pr, commit, nil
+	return pr, nil, nil
 }
 
 // RejectPR rejects a PR using names
@@ -570,7 +645,25 @@ func (s *Service) RejectPR(ctx context.Context, username, teamName, prName strin
 		return nil, err
 	}
 
-	// TODO: pr-allocation-service doesn't have reject endpoint
+	// Find PR ID
+	var prID string
+	for key, m := range s.prMetadata {
+		if m == meta && strings.HasPrefix(key, "pr-") {
+			prID = key
+			break
+		}
+	}
+	if prID == "" {
+		return nil, domain.ErrPRNotFound
+	}
+
+	// Reject PR in pr-allocation-service
+	prResp, err := s.prClient.RejectPR(ctx, prID, username, reason)
+	if err != nil {
+		log.Error(ctx, "failed to reject PR", zap.Error(err))
+		return nil, fmt.Errorf("failed to reject PR: %w", err)
+	}
+
 	log.Info(ctx, "PR rejected",
 		zap.String("pr_name", prName),
 		zap.String("reviewer", username),
@@ -578,16 +671,19 @@ func (s *Service) RejectPR(ctx context.Context, username, teamName, prName strin
 	)
 
 	return &domain.PullRequest{
+		PRID:             prResp.PRID,
 		PRName:           prName,
-		Status:           "REJECTED",
-		TeamName:         meta.TeamName,
-		RepoName:         meta.RepoName,
+		Title:            prResp.PRName,
+		AuthorID:         prResp.AuthorID,
+		Status:           prResp.Status,
+		ReviewerIDs:      prResp.AssignedReviewers,
 		SourceCommitID:   meta.SourceCommit,
 		SourceCommitName: meta.SourceCommitName,
 		TargetCommitID:   meta.TargetCommit,
 		TargetCommitName: meta.TargetCommitName,
 		RootCommitID:     meta.RootCommit,
-		CreatedAt:        time.Now(),
+		RepoName:         meta.RepoName,
+		TeamName:         meta.TeamName,
 	}, nil
 }
 

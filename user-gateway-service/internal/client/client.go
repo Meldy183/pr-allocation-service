@@ -324,6 +324,90 @@ func (c *PRAllocationClient) MergePR(ctx context.Context, prID string) (*PRRespo
 	return &result.PR, nil
 }
 
+// ApprovePR approves a PR by a reviewer
+func (c *PRAllocationClient) ApprovePR(ctx context.Context, prID, reviewerID string) (*PRResponse, bool, error) {
+	url := fmt.Sprintf("%s/pullRequest/approve", c.baseURL)
+
+	body := map[string]string{
+		"pull_request_id": prID,
+		"reviewer_id":     reviewerID,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, false, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		PR          PRResponse `json:"pr"`
+		AllApproved bool       `json:"all_approved"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, false, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.PR, result.AllApproved, nil
+}
+
+// RejectPR rejects a PR by a reviewer
+func (c *PRAllocationClient) RejectPR(ctx context.Context, prID, reviewerID, reason string) (*PRResponse, error) {
+	url := fmt.Sprintf("%s/pullRequest/reject", c.baseURL)
+
+	body := map[string]string{
+		"pull_request_id": prID,
+		"reviewer_id":     reviewerID,
+		"reason":          reason,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		PR PRResponse `json:"pr"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.PR, nil
+}
+
 // GetPRsByAuthor gets PRs by author
 func (c *PRAllocationClient) GetPRsByAuthor(ctx context.Context, authorID string) ([]PRResponse, error) {
 	url := fmt.Sprintf("%s/users/getAuthored?user_id=%s", c.baseURL, authorID)
@@ -576,6 +660,36 @@ func (c *CodeStorageClient) Merge(ctx context.Context, teamID, rootCommit, commi
 	}
 
 	return &result.Commit, nil
+}
+
+// ListCommits returns all commits for a repository
+func (c *CodeStorageClient) ListCommits(ctx context.Context, teamID, rootCommit uuid.UUID) ([]CommitResponse, error) {
+	url := fmt.Sprintf("%s/storage/commits?team_id=%s&root_commit=%s", c.baseURL, teamID.String(), rootCommit.String())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Commits []CommitResponse `json:"commits"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Commits, nil
 }
 
 // InitRepositoryWithName initializes a new repository with a name

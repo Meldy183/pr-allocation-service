@@ -177,6 +177,25 @@ export async function checkout(
   return res.blob();
 }
 
+export async function listCommits(
+  username: string,
+  teamName: string,
+  repoName: string
+): Promise<Commit[]> {
+  const params = new URLSearchParams({
+    team_name: teamName,
+    repo_name: repoName,
+  });
+  const res = await fetch(`${API_BASE}/repo/commits?${params}`, {
+    headers: getHeaders(username),
+  });
+  if (!res.ok) {
+    return []; // Return empty if repo not found
+  }
+  const data = await res.json();
+  return data.commits || [];
+}
+
 export async function createPR(username: string, req: CreatePRRequest): Promise<PullRequest> {
   const res = await fetch(`${API_BASE}/pr/create`, {
     method: 'POST',

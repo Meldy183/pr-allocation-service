@@ -308,15 +308,18 @@ func (s *Storage) GetTeamIDByName(ctx context.Context, teamName string) (uuid.UU
 // CreatePR PR operations.
 func (s *Storage) CreatePR(ctx context.Context, pr *domain.PullRequest) error {
 	log := logger.FromContext(ctx)
-	query := `INSERT INTO pull_requests (pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, updated_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	query := `INSERT INTO pull_requests (pull_request_id, pull_request_name, author_id, status, assigned_reviewers, approved_by, created_at, updated_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	now := time.Now()
 	pr.CreatedAt = &now
 	pr.Status = domain.StatusOpen
+	if pr.ApprovedBy == nil {
+		pr.ApprovedBy = []string{}
+	}
 
 	_, err := s.db.ExecContext(ctx, query, pr.PullRequestID, pr.PullRequestName, pr.AuthorID, pr.Status,
-		pq.Array(pr.AssignedReviewers), pr.CreatedAt, now)
+		pq.Array(pr.AssignedReviewers), pq.Array(pr.ApprovedBy), pr.CreatedAt, now)
 	if err != nil {
 		log.Error(ctx, "failed to create PR", zap.Error(err), zap.String("pr_id", pr.PullRequestID))
 		return fmt.Errorf("failed to create PR: %w", err)
@@ -329,7 +332,7 @@ func (s *Storage) CreatePR(ctx context.Context, pr *domain.PullRequest) error {
 
 func (s *Storage) GetPR(ctx context.Context, prID string) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
-	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
+	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, approved_by, created_at, merged_at, updated_at 
               FROM pull_requests WHERE pull_request_id = $1`
 
 	pr := &domain.PullRequest{}
@@ -338,7 +341,7 @@ func (s *Storage) GetPR(ctx context.Context, prID string) (*domain.PullRequest, 
 
 	err := s.db.QueryRowContext(ctx, query, prID).Scan(
 		&pr.PullRequestID, &pr.PullRequestName, &pr.AuthorID, &pr.Status,
-		pq.Array(&pr.AssignedReviewers), &createdAt, &mergedAt, &updatedAt,
+		pq.Array(&pr.AssignedReviewers), pq.Array(&pr.ApprovedBy), &createdAt, &mergedAt, &updatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -361,13 +364,13 @@ func (s *Storage) GetPR(ctx context.Context, prID string) (*domain.PullRequest, 
 func (s *Storage) UpdatePR(ctx context.Context, pr *domain.PullRequest) error {
 	log := logger.FromContext(ctx)
 	query := `UPDATE pull_requests 
-              SET pull_request_name = $1, status = $2, assigned_reviewers = $3, merged_at = $4, updated_at = $5
-              WHERE pull_request_id = $6`
+              SET pull_request_name = $1, status = $2, assigned_reviewers = $3, approved_by = $4, merged_at = $5, updated_at = $6
+              WHERE pull_request_id = $7`
 
 	now := time.Now()
 
 	result, err := s.db.ExecContext(ctx, query, pr.PullRequestName, pr.Status, pq.Array(pr.AssignedReviewers),
-		pr.MergedAt, now, pr.PullRequestID)
+		pq.Array(pr.ApprovedBy), pr.MergedAt, now, pr.PullRequestID)
 	if err != nil {
 		log.Error(ctx, "failed to update PR", zap.Error(err), zap.String("pr_id", pr.PullRequestID))
 		return fmt.Errorf("failed to update PR: %w", err)
@@ -387,7 +390,7 @@ func (s *Storage) UpdatePR(ctx context.Context, pr *domain.PullRequest) error {
 
 func (s *Storage) GetPRsByReviewer(ctx context.Context, userID string) ([]*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
-	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
+	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, approved_by, created_at, merged_at, updated_at 
               FROM pull_requests WHERE $1 = ANY(assigned_reviewers)`
 
 	rows, err := s.db.QueryContext(ctx, query, userID)
@@ -404,7 +407,7 @@ func (s *Storage) GetPRsByReviewer(ctx context.Context, userID string) ([]*domai
 		var mergedAt sql.NullTime
 
 		if err := rows.Scan(&pr.PullRequestID, &pr.PullRequestName, &pr.AuthorID, &pr.Status,
-			pq.Array(&pr.AssignedReviewers), &createdAt, &mergedAt, &updatedAt); err != nil {
+			pq.Array(&pr.AssignedReviewers), pq.Array(&pr.ApprovedBy), &createdAt, &mergedAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan PR: %w", err)
 		}
 
@@ -420,7 +423,7 @@ func (s *Storage) GetPRsByReviewer(ctx context.Context, userID string) ([]*domai
 
 func (s *Storage) GetPRsByAuthor(ctx context.Context, authorID string) ([]*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
-	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
+	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, approved_by, created_at, merged_at, updated_at 
               FROM pull_requests WHERE author_id = $1`
 
 	rows, err := s.db.QueryContext(ctx, query, authorID)
@@ -437,7 +440,7 @@ func (s *Storage) GetPRsByAuthor(ctx context.Context, authorID string) ([]*domai
 		var mergedAt sql.NullTime
 
 		if err := rows.Scan(&pr.PullRequestID, &pr.PullRequestName, &pr.AuthorID, &pr.Status,
-			pq.Array(&pr.AssignedReviewers), &createdAt, &mergedAt, &updatedAt); err != nil {
+			pq.Array(&pr.AssignedReviewers), pq.Array(&pr.ApprovedBy), &createdAt, &mergedAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan PR: %w", err)
 		}
 

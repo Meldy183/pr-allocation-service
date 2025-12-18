@@ -274,6 +274,42 @@ func (s *Storage) RootCommitExists(ctx context.Context, teamID, rootCommit uuid.
 	return exists, nil
 }
 
+// ListCommits returns all commits for a repository (by team_id and root_commit)
+func (s *Storage) ListCommits(ctx context.Context, teamID, rootCommit uuid.UUID) ([]*domain.Commit, error) {
+	query := `
+		SELECT c.id, c.team_id, c.root_commit, c.parent_commit_ids, c.created_at, cn.name
+		FROM commits c
+		LEFT JOIN commit_names cn ON c.id = cn.commit_id AND c.team_id = cn.team_id AND c.root_commit = cn.root_commit
+		WHERE c.team_id = $1 AND c.root_commit = $2
+		ORDER BY c.created_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, teamID, rootCommit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list commits: %w", err)
+	}
+	defer rows.Close()
+
+	var commits []*domain.Commit
+	for rows.Next() {
+		commit := &domain.Commit{}
+		var parentIDs pq.StringArray
+		var name sql.NullString
+
+		if err := rows.Scan(&commit.ID, &commit.TeamID, &commit.RootCommit, &parentIDs, &commit.CreatedAt, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan commit: %w", err)
+		}
+
+		commit.ParentCommitIDs = stringArrayToUUIDs(parentIDs)
+		if name.Valid {
+			commit.CommitName = &name.String
+		}
+		commits = append(commits, commit)
+	}
+
+	return commits, nil
+}
+
 // GetCommitName retrieves the name of a commit
 func (s *Storage) GetCommitName(ctx context.Context, commitID uuid.UUID) (string, error) {
 	query := `SELECT name FROM commit_names WHERE commit_id = $1`
@@ -319,6 +355,28 @@ func (s *Storage) SetCommitName(ctx context.Context, teamID, rootCommit, commitI
 	}
 
 	return nil
+}
+
+// GetRootCommitByRepoName finds a root commit by the repo/commit name for a team
+// This searches for root commits (where id = root_commit) that have a specific name
+func (s *Storage) GetRootCommitByRepoName(ctx context.Context, teamID uuid.UUID, repoName string) (uuid.UUID, error) {
+	query := `
+		SELECT c.id FROM commits c
+		JOIN commit_names cn ON c.id = cn.commit_id AND c.team_id = cn.team_id AND c.root_commit = cn.root_commit
+		WHERE c.team_id = $1 AND c.id = c.root_commit AND cn.name = $2
+		LIMIT 1
+	`
+
+	var rootCommitID uuid.UUID
+	err := s.db.QueryRowContext(ctx, query, teamID, repoName).Scan(&rootCommitID)
+	if err == sql.ErrNoRows {
+		return uuid.Nil, domain.ErrCommitNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to get root commit by repo name: %w", err)
+	}
+
+	return rootCommitID, nil
 }
 
 // Helper function to convert string array to UUID slice

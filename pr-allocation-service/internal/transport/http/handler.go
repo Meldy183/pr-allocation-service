@@ -61,6 +61,9 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 
 	// PRs - matching OpenAPI spec
 	router.HandleFunc("/pullRequest/create", h.CreatePR).Methods("POST")
+	router.HandleFunc("/pullRequest/get", h.GetPR).Methods("GET")
+	router.HandleFunc("/pullRequest/approve", h.ApprovePR).Methods("POST")
+	router.HandleFunc("/pullRequest/reject", h.RejectPR).Methods("POST")
 	router.HandleFunc("/pullRequest/merge", h.MergePR).Methods("POST")
 	router.HandleFunc("/pullRequest/reassign", h.ReassignReviewer).Methods("POST")
 
@@ -195,6 +198,112 @@ func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, r, http.StatusCreated, map[string]*domain.PullRequest{"pr": pr})
 }
 
+// GetPR GET /pullRequest/get?pull_request_id=...
+func (h *Handler) GetPR(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	prID := r.URL.Query().Get("pull_request_id")
+	if prID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "pull_request_id query parameter required")
+		return
+	}
+
+	pr, err := h.service.GetPR(ctx, prID)
+	if err != nil {
+		log.Error(ctx, "failed to get PR", zap.Error(err))
+		h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "PR not found")
+		return
+	}
+
+	h.respondJSON(w, r, http.StatusOK, map[string]*domain.PullRequest{"pr": pr})
+}
+
+// ApprovePR POST /pullRequest/approve.
+func (h *Handler) ApprovePR(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	var req domain.ApprovePRRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error(ctx, "failed to decode request", zap.Error(err))
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	if req.PullRequestID == "" || req.ReviewerID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "pull_request_id and reviewer_id are required")
+		return
+	}
+
+	pr, allApproved, err := h.service.ApprovePR(ctx, &req)
+	if err != nil {
+		log.Error(ctx, "failed to approve PR", zap.Error(err))
+
+		if contains(err.Error(), domain.ErrNotFound) {
+			h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "PR not found")
+			return
+		}
+		if contains(err.Error(), domain.ErrNotAssigned) {
+			h.respondError(w, r, http.StatusForbidden, domain.ErrNotAssigned, "reviewer is not assigned to this PR")
+			return
+		}
+		if contains(err.Error(), domain.ErrPRNotOpen) {
+			h.respondError(w, r, http.StatusConflict, domain.ErrPRNotOpen, "PR is not open")
+			return
+		}
+
+		h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, err.Error())
+		return
+	}
+
+	h.respondJSON(w, r, http.StatusOK, map[string]any{
+		"pr":           pr,
+		"all_approved": allApproved,
+	})
+}
+
+// RejectPR POST /pullRequest/reject.
+func (h *Handler) RejectPR(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	var req domain.RejectPRRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Error(ctx, "failed to decode request", zap.Error(err))
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "invalid request body")
+		return
+	}
+
+	if req.PullRequestID == "" || req.ReviewerID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "pull_request_id and reviewer_id are required")
+		return
+	}
+
+	pr, err := h.service.RejectPR(ctx, &req)
+	if err != nil {
+		log.Error(ctx, "failed to reject PR", zap.Error(err))
+
+		if contains(err.Error(), domain.ErrNotFound) {
+			h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "PR not found")
+			return
+		}
+		if contains(err.Error(), domain.ErrNotAssigned) {
+			h.respondError(w, r, http.StatusForbidden, domain.ErrNotAssigned, "reviewer is not assigned to this PR")
+			return
+		}
+		if contains(err.Error(), domain.ErrPRNotOpen) {
+			h.respondError(w, r, http.StatusConflict, domain.ErrPRNotOpen, "PR is not open")
+			return
+		}
+
+		h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, err.Error())
+		return
+	}
+
+	h.respondJSON(w, r, http.StatusOK, map[string]*domain.PullRequest{"pr": pr})
+}
+
 // MergePR POST /pullRequest/merge.
 func (h *Handler) MergePR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -218,6 +327,14 @@ func (h *Handler) MergePR(w http.ResponseWriter, r *http.Request) {
 
 		if contains(err.Error(), domain.ErrNotFound) {
 			h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "PR not found")
+			return
+		}
+		if contains(err.Error(), domain.ErrNotAllApproved) {
+			h.respondError(w, r, http.StatusConflict, domain.ErrNotAllApproved, "not all reviewers have approved")
+			return
+		}
+		if contains(err.Error(), domain.ErrPRRejected) {
+			h.respondError(w, r, http.StatusConflict, domain.ErrPRRejected, "PR was rejected")
 			return
 		}
 

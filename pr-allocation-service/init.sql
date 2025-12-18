@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     author_id VARCHAR(255) NOT NULL REFERENCES users(user_id),
     status VARCHAR(50) NOT NULL DEFAULT 'OPEN',
     assigned_reviewers TEXT[] NOT NULL DEFAULT '{}',
+    approved_by TEXT[] NOT NULL DEFAULT '{}',
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     merged_at TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()

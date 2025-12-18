@@ -44,6 +44,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	router.HandleFunc("/api/repo/init", h.InitRepository).Methods(http.MethodPost)
 	router.HandleFunc("/api/repo/push", h.Push).Methods(http.MethodPost)
 	router.HandleFunc("/api/repo/checkout", h.Checkout).Methods(http.MethodGet)
+	router.HandleFunc("/api/repo/commits", h.ListCommits).Methods(http.MethodGet)
 
 	// Pull Requests - now using query params instead of path params
 	router.HandleFunc("/api/pr/create", h.CreatePR).Methods(http.MethodPost)
@@ -325,6 +326,37 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=code.zip")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(code)
+}
+
+// ListCommits handles GET /api/repo/commits
+func (h *Handler) ListCommits(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	username := h.getUsername(r)
+
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
+		return
+	}
+
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
+
+	repoName := r.URL.Query().Get("repo_name")
+	if repoName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "repo_name is required")
+		return
+	}
+
+	commits, err := h.service.ListCommits(ctx, username, teamName, repoName)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, map[string]interface{}{"commits": commits})
 }
 
 // CreatePR handles POST /api/pr/create

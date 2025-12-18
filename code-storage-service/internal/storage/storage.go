@@ -20,9 +20,11 @@ type Storage interface {
 	MergeCommits(ctx context.Context, teamID, rootCommit, commitID1, commitID2 uuid.UUID) (*domain.Commit, error)
 	IsLeafCommit(ctx context.Context, teamID, rootCommit, commitID uuid.UUID) (bool, error)
 	RootCommitExists(ctx context.Context, teamID, rootCommit uuid.UUID) (bool, error)
+	ListCommits(ctx context.Context, teamID, rootCommit uuid.UUID) ([]*domain.Commit, error)
 
 	// Commit name operations
 	GetCommitName(ctx context.Context, commitID uuid.UUID) (string, error)
 	GetCommitIDByName(ctx context.Context, teamID, rootCommit uuid.UUID, name string) (uuid.UUID, error)
 	SetCommitName(ctx context.Context, teamID, rootCommit, commitID uuid.UUID, name string) error
+	GetRootCommitByRepoName(ctx context.Context, teamID uuid.UUID, repoName string) (uuid.UUID, error)
 }

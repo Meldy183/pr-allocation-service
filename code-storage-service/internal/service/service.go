@@ -236,6 +236,29 @@ func (s *Service) GetCommitName(ctx context.Context, commitID uuid.UUID) (string
 	return name, nil
 }
 
+// ListCommits returns all commits for a repository
+func (s *Service) ListCommits(ctx context.Context, teamID, rootCommit uuid.UUID) ([]*domain.Commit, error) {
+	log := logger.FromContext(ctx)
+
+	// Check if team exists
+	exists, err := s.storage.TeamExists(ctx, teamID)
+	if err != nil {
+		log.Error(ctx, "failed to check team existence", zap.Error(err))
+		return nil, err
+	}
+	if !exists {
+		return nil, domain.ErrTeamNotFound
+	}
+
+	commits, err := s.storage.ListCommits(ctx, teamID, rootCommit)
+	if err != nil {
+		log.Error(ctx, "failed to list commits", zap.Error(err))
+		return nil, err
+	}
+
+	return commits, nil
+}
+
 // GetCommitIDByName retrieves commit ID by its name within a repository
 func (s *Service) GetCommitIDByName(ctx context.Context, teamID, rootCommit uuid.UUID, name string) (uuid.UUID, error) {
 	log := logger.FromContext(ctx)
