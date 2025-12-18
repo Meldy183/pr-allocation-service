@@ -23,10 +23,15 @@ type Service struct {
 
 // PRMetadata stores additional PR info not in pr-allocation-service
 type PRMetadata struct {
-	RootCommit   uuid.UUID
-	SourceCommit uuid.UUID
-	TargetCommit uuid.UUID
-	TeamID       uuid.UUID
+	PRName           string
+	TeamName         string
+	RepoName         string
+	RootCommit       uuid.UUID
+	SourceCommit     uuid.UUID
+	SourceCommitName string
+	TargetCommit     uuid.UUID
+	TargetCommitName string
+	TeamID           uuid.UUID
 }
 
 // NewService creates a new Service instance
@@ -43,11 +48,11 @@ func (s *Service) CreateTeam(ctx context.Context, req *domain.CreateTeamRequest)
 	log := logger.FromContext(ctx)
 	log.Info(ctx, "creating team", zap.String("team_name", req.TeamName))
 
-	// Convert domain members to client members
+	// Convert domain members to client members (username only, IDs are generated)
 	members := make([]client.TeamMember, len(req.Members))
 	for i, m := range req.Members {
 		members[i] = client.TeamMember{
-			UserID:   m.UserID,
+			UserID:   m.Username, // Use username as user_id for simplicity
 			Username: m.Username,
 			IsActive: m.IsActive,
 		}
@@ -63,10 +68,10 @@ func (s *Service) CreateTeam(ctx context.Context, req *domain.CreateTeamRequest)
 		return nil, fmt.Errorf("failed to create team: %w", err)
 	}
 
-	// Convert response to domain
-	domainMembers := make([]domain.CreateTeamMember, len(team.Members))
+	// Convert response to domain (response includes IDs)
+	domainMembers := make([]domain.TeamMemberResponse, len(team.Members))
 	for i, m := range team.Members {
-		domainMembers[i] = domain.CreateTeamMember{
+		domainMembers[i] = domain.TeamMemberResponse{
 			UserID:   m.UserID,
 			Username: m.Username,
 			IsActive: m.IsActive,
@@ -93,9 +98,9 @@ func (s *Service) GetTeam(ctx context.Context, teamName string) (*domain.Team, e
 	}
 
 	// Convert response to domain
-	domainMembers := make([]domain.CreateTeamMember, len(team.Members))
+	domainMembers := make([]domain.TeamMemberResponse, len(team.Members))
 	for i, m := range team.Members {
-		domainMembers[i] = domain.CreateTeamMember{
+		domainMembers[i] = domain.TeamMemberResponse{
 			UserID:   m.UserID,
 			Username: m.Username,
 			IsActive: m.IsActive,
@@ -109,12 +114,12 @@ func (s *Service) GetTeam(ctx context.Context, teamName string) (*domain.Team, e
 	}, nil
 }
 
-// GetUserProfile gets user profile by ID
-func (s *Service) GetUserProfile(ctx context.Context, userID string) (*domain.UserProfile, error) {
+// GetUserProfile gets user profile by username
+func (s *Service) GetUserProfile(ctx context.Context, username string) (*domain.UserProfile, error) {
 	log := logger.FromContext(ctx)
 
-	// Get user from pr-allocation-service
-	user, err := s.prClient.GetUser(ctx, userID)
+	// Get user from pr-allocation-service (by username)
+	user, err := s.prClient.GetUser(ctx, username)
 	if err != nil {
 		log.Error(ctx, "failed to get user", zap.Error(err))
 		return nil, domain.ErrUserNotFound
@@ -134,21 +139,24 @@ func (s *Service) ResolveTeamName(ctx context.Context, teamName string) (uuid.UU
 	return s.prClient.ResolveTeamID(ctx, teamName)
 }
 
-// GetUserTeamID gets user's team ID
-func (s *Service) GetUserTeamID(ctx context.Context, userID string) (uuid.UUID, error) {
-	user, err := s.prClient.GetUser(ctx, userID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	return user.TeamID, nil
-}
-
-// InitRepository initializes a new repository
-func (s *Service) InitRepository(ctx context.Context, userID string, teamID uuid.UUID, code []byte) (*domain.Commit, error) {
+// InitRepository initializes a new repository using names
+func (s *Service) InitRepository(ctx context.Context, username, teamName, repoName string, code []byte) (*domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
-	// Initialize repository in code-storage
-	commit, err := s.codeClient.InitRepository(ctx, teamID, code)
+	// Resolve team name to UUID
+	teamID, err := s.prClient.ResolveTeamID(ctx, teamName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve team", zap.Error(err))
+		return nil, domain.ErrTeamNotFound
+	}
+
+	// Verify user belongs to team
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, err
+	}
+
+	// Initialize repository in code-storage with repo name as commit name
+	commit, err := s.codeClient.InitRepositoryWithName(ctx, teamID, repoName, code)
 	if err != nil {
 		log.Error(ctx, "failed to init repository", zap.Error(err))
 		if strings.Contains(err.Error(), "not found") {
@@ -158,7 +166,8 @@ func (s *Service) InitRepository(ctx context.Context, userID string, teamID uuid
 	}
 
 	log.Info(ctx, "repository initialized",
-		zap.String("user_id", userID),
+		zap.String("username", username),
+		zap.String("repo_name", repoName),
 		zap.String("root_commit", commit.RootCommit.String()),
 	)
 
@@ -166,16 +175,43 @@ func (s *Service) InitRepository(ctx context.Context, userID string, teamID uuid
 		CommitID:        commit.CommitID,
 		RootCommit:      commit.RootCommit,
 		ParentCommitIDs: commit.ParentCommitIDs,
-		CommitName:      commit.CommitName,
+		CommitName:      &repoName,
+		RepoName:        &repoName,
 		CreatedAt:       commit.CreatedAt,
 	}, nil
 }
 
-// Push creates a new commit
-func (s *Service) Push(ctx context.Context, userID string, teamID, rootCommit, parentCommit uuid.UUID, code []byte) (*domain.Commit, error) {
+// Push creates a new commit using names
+func (s *Service) Push(ctx context.Context, username, teamName, repoName, parentCommitName, commitName string, code []byte) (*domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
-	commit, err := s.codeClient.Push(ctx, teamID, rootCommit, parentCommit, code)
+	// Verify user access
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, err
+	}
+
+	// Resolve team name to UUID
+	teamID, err := s.prClient.ResolveTeamID(ctx, teamName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve team", zap.Error(err))
+		return nil, domain.ErrTeamNotFound
+	}
+
+	// Resolve repo name (root commit) and parent commit by name
+	rootCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, repoName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve repo", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
+
+	parentCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, parentCommitName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve parent commit", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
+
+	// Push commit with name
+	commit, err := s.codeClient.PushWithName(ctx, teamID, rootCommit, parentCommit, commitName, code)
 	if err != nil {
 		log.Error(ctx, "failed to push commit", zap.Error(err))
 		if strings.Contains(err.Error(), "not found") {
@@ -185,7 +221,8 @@ func (s *Service) Push(ctx context.Context, userID string, teamID, rootCommit, p
 	}
 
 	log.Info(ctx, "commit pushed",
-		zap.String("user_id", userID),
+		zap.String("username", username),
+		zap.String("commit_name", commitName),
 		zap.String("commit_id", commit.CommitID.String()),
 	)
 
@@ -193,14 +230,40 @@ func (s *Service) Push(ctx context.Context, userID string, teamID, rootCommit, p
 		CommitID:        commit.CommitID,
 		RootCommit:      commit.RootCommit,
 		ParentCommitIDs: commit.ParentCommitIDs,
-		CommitName:      commit.CommitName,
+		CommitName:      &commitName,
+		RepoName:        &repoName,
 		CreatedAt:       commit.CreatedAt,
 	}, nil
 }
 
-// Checkout retrieves code for a commit
-func (s *Service) Checkout(ctx context.Context, userID string, teamID, rootCommit, commitID uuid.UUID) ([]byte, error) {
+// Checkout retrieves code for a commit using names
+func (s *Service) Checkout(ctx context.Context, username, teamName, repoName, commitName string) ([]byte, error) {
 	log := logger.FromContext(ctx)
+
+	// Verify user access
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, err
+	}
+
+	// Resolve team name to UUID
+	teamID, err := s.prClient.ResolveTeamID(ctx, teamName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve team", zap.Error(err))
+		return nil, domain.ErrTeamNotFound
+	}
+
+	// Resolve repo and commit by name
+	rootCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, repoName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve repo", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
+
+	commitID, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, commitName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve commit", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
 
 	code, err := s.codeClient.Checkout(ctx, teamID, rootCommit, commitID)
 	if err != nil {
@@ -212,22 +275,53 @@ func (s *Service) Checkout(ctx context.Context, userID string, teamID, rootCommi
 	}
 
 	log.Info(ctx, "checkout successful",
-		zap.String("user_id", userID),
-		zap.String("commit_id", commitID.String()),
+		zap.String("username", username),
+		zap.String("commit_name", commitName),
 	)
 
 	return code, nil
 }
 
-// CreatePR creates a new pull request
-func (s *Service) CreatePR(ctx context.Context, userID string, teamID uuid.UUID, req *domain.CreatePRRequest) (*domain.PullRequest, error) {
+// CreatePR creates a new pull request using names
+func (s *Service) CreatePR(ctx context.Context, username string, req *domain.CreatePRRequest) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
+
+	// Verify user access
+	if err := s.verifyUserAccess(ctx, username, req.TeamName); err != nil {
+		return nil, err
+	}
+
+	// Resolve team name to UUID
+	teamID, err := s.prClient.ResolveTeamID(ctx, req.TeamName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve team", zap.Error(err))
+		return nil, domain.ErrTeamNotFound
+	}
+
+	// Resolve repo and commits by name
+	rootCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, req.RepoName, req.RepoName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve repo", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
+
+	sourceCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, req.RepoName, req.SourceCommitName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve source commit", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
+
+	targetCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, req.RepoName, req.TargetCommitName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve target commit", zap.Error(err))
+		return nil, domain.ErrCommitNotFound
+	}
 
 	// Generate PR ID
 	prID := fmt.Sprintf("pr-%s", uuid.New().String()[:8])
 
 	// Create PR in pr-allocation-service
-	prResp, err := s.prClient.CreatePR(ctx, prID, req.Title, userID)
+	prResp, err := s.prClient.CreatePR(ctx, prID, req.Title, username)
 	if err != nil {
 		log.Error(ctx, "failed to create PR", zap.Error(err))
 		if strings.Contains(err.Error(), "already exists") {
@@ -236,45 +330,59 @@ func (s *Service) CreatePR(ctx context.Context, userID string, teamID uuid.UUID,
 		return nil, fmt.Errorf("failed to create PR: %w", err)
 	}
 
-	// Store metadata for later use
-	s.prMetadata[prID] = &PRMetadata{
-		RootCommit:   req.RootCommit,
-		SourceCommit: req.SourceCommit,
-		TargetCommit: req.TargetCommit,
-		TeamID:       teamID,
+	// Store metadata for later use (keyed by team_name:pr_name)
+	metaKey := fmt.Sprintf("%s:%s", req.TeamName, req.PRName)
+	s.prMetadata[metaKey] = &PRMetadata{
+		PRName:           req.PRName,
+		TeamName:         req.TeamName,
+		RepoName:         req.RepoName,
+		RootCommit:       rootCommit,
+		SourceCommit:     sourceCommit,
+		SourceCommitName: req.SourceCommitName,
+		TargetCommit:     targetCommit,
+		TargetCommitName: req.TargetCommitName,
+		TeamID:           teamID,
 	}
+	// Also store by prID for internal lookups
+	s.prMetadata[prID] = s.prMetadata[metaKey]
 
 	log.Info(ctx, "PR created",
-		zap.String("pr_id", prID),
-		zap.String("author_id", userID),
+		zap.String("pr_name", req.PRName),
+		zap.String("author", username),
 		zap.Strings("reviewers", prResp.AssignedReviewers),
 	)
 
 	return &domain.PullRequest{
-		PRID:         prResp.PRID,
-		Title:        prResp.PRName,
-		AuthorID:     prResp.AuthorID,
-		Status:       prResp.Status,
-		ReviewerIDs:  prResp.AssignedReviewers,
-		SourceCommit: req.SourceCommit,
-		TargetCommit: req.TargetCommit,
-		RootCommit:   req.RootCommit,
-		CreatedAt:    prResp.CreatedAt,
+		PRID:             prResp.PRID,
+		PRName:           req.PRName,
+		Title:            req.Title,
+		AuthorID:         prResp.AuthorID,
+		AuthorName:       username,
+		Status:           prResp.Status,
+		ReviewerIDs:      prResp.AssignedReviewers,
+		SourceCommitID:   sourceCommit,
+		SourceCommitName: req.SourceCommitName,
+		TargetCommitID:   targetCommit,
+		TargetCommitName: req.TargetCommitName,
+		RootCommitID:     rootCommit,
+		RepoName:         req.RepoName,
+		TeamName:         req.TeamName,
+		CreatedAt:        prResp.CreatedAt,
 	}, nil
 }
 
 // GetMyPRs gets PRs authored by user
-func (s *Service) GetMyPRs(ctx context.Context, userID string, status string) ([]domain.PullRequest, error) {
+func (s *Service) GetMyPRs(ctx context.Context, username string, status string) ([]domain.PullRequest, error) {
 	// This would need a new endpoint in pr-allocation-service
 	// For now, return empty list
 	return []domain.PullRequest{}, nil
 }
 
 // GetReviewPRs gets PRs where user is reviewer
-func (s *Service) GetReviewPRs(ctx context.Context, userID string, status string) ([]domain.PullRequest, error) {
+func (s *Service) GetReviewPRs(ctx context.Context, username string, status string) ([]domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
 
-	prs, err := s.prClient.GetPRsByReviewer(ctx, userID)
+	prs, err := s.prClient.GetPRsByReviewer(ctx, username)
 	if err != nil {
 		log.Error(ctx, "failed to get review PRs", zap.Error(err))
 		return nil, fmt.Errorf("failed to get review PRs: %w", err)
@@ -298,9 +406,14 @@ func (s *Service) GetReviewPRs(ctx context.Context, userID string, status string
 
 		// Add metadata if available
 		if meta, ok := s.prMetadata[pr.PRID]; ok {
-			domainPR.RootCommit = meta.RootCommit
-			domainPR.SourceCommit = meta.SourceCommit
-			domainPR.TargetCommit = meta.TargetCommit
+			domainPR.PRName = meta.PRName
+			domainPR.TeamName = meta.TeamName
+			domainPR.RepoName = meta.RepoName
+			domainPR.RootCommitID = meta.RootCommit
+			domainPR.SourceCommitID = meta.SourceCommit
+			domainPR.SourceCommitName = meta.SourceCommitName
+			domainPR.TargetCommitID = meta.TargetCommit
+			domainPR.TargetCommitName = meta.TargetCommitName
 		}
 
 		result = append(result, domainPR)
@@ -309,24 +422,42 @@ func (s *Service) GetReviewPRs(ctx context.Context, userID string, status string
 	return result, nil
 }
 
-// ApprovePR approves a PR and triggers merge
-func (s *Service) ApprovePR(ctx context.Context, userID, prID string) (*domain.PullRequest, *domain.Commit, error) {
+// ApprovePR approves a PR and triggers merge using names
+func (s *Service) ApprovePR(ctx context.Context, username, teamName, prName string) (*domain.PullRequest, *domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
-	// Get PR metadata
-	meta, ok := s.prMetadata[prID]
+	// Get PR metadata by name
+	metaKey := fmt.Sprintf("%s:%s", teamName, prName)
+	meta, ok := s.prMetadata[metaKey]
 	if !ok {
 		return nil, nil, domain.ErrPRNotFound
 	}
 
-	// Verify user is a reviewer (would check pr-allocation-service)
-	// For now, we trust the request
+	// Verify user has access to this team
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, nil, err
+	}
+
+	// TODO: Verify user is a reviewer (would check pr-allocation-service)
 
 	// Merge commits in code-storage
 	mergeCommit, err := s.codeClient.Merge(ctx, meta.TeamID, meta.RootCommit, meta.SourceCommit, meta.TargetCommit)
 	if err != nil {
 		log.Error(ctx, "failed to merge commits", zap.Error(err))
 		return nil, nil, fmt.Errorf("failed to merge: %w", err)
+	}
+
+	// Find PR ID for pr-allocation-service
+	var prID string
+	for key, m := range s.prMetadata {
+		if m == meta && strings.HasPrefix(key, "pr-") {
+			prID = key
+			break
+		}
+	}
+	if prID == "" {
+		// Generate one if not found
+		prID = fmt.Sprintf("pr-%s", uuid.New().String()[:8])
 	}
 
 	// Mark PR as merged in pr-allocation-service
@@ -337,68 +468,89 @@ func (s *Service) ApprovePR(ctx context.Context, userID, prID string) (*domain.P
 	}
 
 	log.Info(ctx, "PR approved and merged",
-		zap.String("pr_id", prID),
-		zap.String("reviewer_id", userID),
+		zap.String("pr_name", prName),
+		zap.String("reviewer", username),
 		zap.String("merge_commit", mergeCommit.CommitID.String()),
 	)
 
 	pr := &domain.PullRequest{
-		PRID:         prResp.PRID,
-		Title:        prResp.PRName,
-		AuthorID:     prResp.AuthorID,
-		Status:       prResp.Status,
-		ReviewerIDs:  prResp.AssignedReviewers,
-		SourceCommit: meta.SourceCommit,
-		TargetCommit: meta.TargetCommit,
-		RootCommit:   meta.RootCommit,
-		CreatedAt:    prResp.CreatedAt,
-		MergedAt:     prResp.MergedAt,
+		PRID:             prResp.PRID,
+		PRName:           prName,
+		Title:            prResp.PRName,
+		AuthorID:         prResp.AuthorID,
+		Status:           prResp.Status,
+		ReviewerIDs:      prResp.AssignedReviewers,
+		SourceCommitID:   meta.SourceCommit,
+		SourceCommitName: meta.SourceCommitName,
+		TargetCommitID:   meta.TargetCommit,
+		TargetCommitName: meta.TargetCommitName,
+		RootCommitID:     meta.RootCommit,
+		RepoName:         meta.RepoName,
+		TeamName:         meta.TeamName,
+		CreatedAt:        prResp.CreatedAt,
+		MergedAt:         prResp.MergedAt,
 	}
 
 	commit := &domain.Commit{
 		CommitID:        mergeCommit.CommitID,
 		RootCommit:      mergeCommit.RootCommit,
 		ParentCommitIDs: mergeCommit.ParentCommitIDs,
+		RepoName:        &meta.RepoName,
 		CreatedAt:       mergeCommit.CreatedAt,
 	}
 
 	return pr, commit, nil
 }
 
-// RejectPR rejects a PR
-func (s *Service) RejectPR(ctx context.Context, userID, prID string, reason string) (*domain.PullRequest, error) {
+// RejectPR rejects a PR using names
+func (s *Service) RejectPR(ctx context.Context, username, teamName, prName string, reason string) (*domain.PullRequest, error) {
 	log := logger.FromContext(ctx)
 
-	// Get PR metadata
-	meta, ok := s.prMetadata[prID]
+	// Get PR metadata by name
+	metaKey := fmt.Sprintf("%s:%s", teamName, prName)
+	meta, ok := s.prMetadata[metaKey]
 	if !ok {
 		return nil, domain.ErrPRNotFound
 	}
 
-	// pr-allocation-service doesn't have reject endpoint
-	// We'd need to add it or handle this differently
+	// Verify user access
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, err
+	}
+
+	// TODO: pr-allocation-service doesn't have reject endpoint
 	log.Info(ctx, "PR rejected",
-		zap.String("pr_id", prID),
-		zap.String("reviewer_id", userID),
+		zap.String("pr_name", prName),
+		zap.String("reviewer", username),
 		zap.String("reason", reason),
 	)
 
 	return &domain.PullRequest{
-		PRID:         prID,
-		Status:       "REJECTED",
-		SourceCommit: meta.SourceCommit,
-		TargetCommit: meta.TargetCommit,
-		RootCommit:   meta.RootCommit,
-		CreatedAt:    time.Now(),
+		PRName:           prName,
+		Status:           "REJECTED",
+		TeamName:         meta.TeamName,
+		RepoName:         meta.RepoName,
+		SourceCommitID:   meta.SourceCommit,
+		SourceCommitName: meta.SourceCommitName,
+		TargetCommitID:   meta.TargetCommit,
+		TargetCommitName: meta.TargetCommitName,
+		RootCommitID:     meta.RootCommit,
+		CreatedAt:        time.Now(),
 	}, nil
 }
 
-// GetPRCode gets code for a PR
-func (s *Service) GetPRCode(ctx context.Context, userID, prID string) ([]byte, error) {
+// GetPRCode gets code for a PR using names
+func (s *Service) GetPRCode(ctx context.Context, username, teamName, prName string) ([]byte, error) {
 	log := logger.FromContext(ctx)
 
-	// Get PR metadata
-	meta, ok := s.prMetadata[prID]
+	// Verify user access
+	if err := s.verifyUserAccess(ctx, username, teamName); err != nil {
+		return nil, err
+	}
+
+	// Get PR metadata by name
+	metaKey := fmt.Sprintf("%s:%s", teamName, prName)
+	meta, ok := s.prMetadata[metaKey]
 	if !ok {
 		return nil, domain.ErrPRNotFound
 	}
@@ -410,4 +562,22 @@ func (s *Service) GetPRCode(ctx context.Context, userID, prID string) ([]byte, e
 	}
 
 	return code, nil
+}
+
+// verifyUserAccess checks if user belongs to the team
+func (s *Service) verifyUserAccess(ctx context.Context, username, teamName string) error {
+	user, err := s.prClient.GetUser(ctx, username)
+	if err != nil {
+		return domain.ErrUserNotFound
+	}
+
+	if !user.IsActive {
+		return domain.ErrUserInactive
+	}
+
+	if user.TeamName != teamName {
+		return domain.ErrAccessDenied
+	}
+
+	return nil
 }

@@ -45,13 +45,13 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	router.HandleFunc("/api/repo/push", h.Push).Methods(http.MethodPost)
 	router.HandleFunc("/api/repo/checkout", h.Checkout).Methods(http.MethodGet)
 
-	// Pull Requests
+	// Pull Requests - now using query params instead of path params
 	router.HandleFunc("/api/pr/create", h.CreatePR).Methods(http.MethodPost)
 	router.HandleFunc("/api/pr/my", h.GetMyPRs).Methods(http.MethodGet)
 	router.HandleFunc("/api/pr/reviews", h.GetReviewPRs).Methods(http.MethodGet)
-	router.HandleFunc("/api/pr/{pr_id}/approve", h.ApprovePR).Methods(http.MethodPost)
-	router.HandleFunc("/api/pr/{pr_id}/reject", h.RejectPR).Methods(http.MethodPost)
-	router.HandleFunc("/api/pr/{pr_id}/code", h.GetPRCode).Methods(http.MethodGet)
+	router.HandleFunc("/api/pr/approve", h.ApprovePR).Methods(http.MethodPost)
+	router.HandleFunc("/api/pr/reject", h.RejectPR).Methods(http.MethodPost)
+	router.HandleFunc("/api/pr/code", h.GetPRCode).Methods(http.MethodGet)
 }
 
 // LoggingMiddleware adds logging and request ID
@@ -73,9 +73,9 @@ func (h *Handler) LoggingMiddleware(log logger.Logger) func(next http.Handler) h
 	}
 }
 
-// getUserID extracts user ID from header
-func (h *Handler) getUserID(r *http.Request) string {
-	return r.Header.Get("X-User-ID")
+// getUsername extracts username from header
+func (h *Handler) getUsername(r *http.Request) string {
+	return r.Header.Get("X-Username")
 }
 
 // HealthCheck handles health check
@@ -87,10 +87,10 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
@@ -122,10 +122,10 @@ func (h *Handler) CreateTeam(w http.ResponseWriter, r *http.Request) {
 // GetTeam handles GET /api/team/get
 func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
@@ -147,14 +147,14 @@ func (h *Handler) GetTeam(w http.ResponseWriter, r *http.Request) {
 // GetProfile handles GET /api/me
 func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
-	profile, err := h.service.GetUserProfile(ctx, userID)
+	profile, err := h.service.GetUserProfile(ctx, username)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -167,10 +167,10 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
@@ -180,11 +180,17 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get team_id from form
-	teamIDStr := r.FormValue("team_id")
-	teamID, err := uuid.Parse(teamIDStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid team_id format")
+	// Get team_name from form
+	teamName := r.FormValue("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
+
+	// Get repo_name from form
+	repoName := r.FormValue("repo_name")
+	if repoName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "repo_name is required")
 		return
 	}
 
@@ -202,7 +208,7 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commit, err := h.service.InitRepository(ctx, userID, teamID, code)
+	commit, err := h.service.InitRepository(ctx, username, teamName, repoName, code)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -215,10 +221,10 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
@@ -228,24 +234,27 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	teamIDStr := r.FormValue("team_id")
-	teamID, err := uuid.Parse(teamIDStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid team_id format")
+	teamName := r.FormValue("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
 		return
 	}
 
-	rootCommitStr := r.FormValue("root_commit")
-	rootCommit, err := uuid.Parse(rootCommitStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid root_commit format")
+	repoName := r.FormValue("repo_name")
+	if repoName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "repo_name is required")
 		return
 	}
 
-	parentCommitStr := r.FormValue("parent_commit")
-	parentCommit, err := uuid.Parse(parentCommitStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid parent_commit format")
+	parentCommitName := r.FormValue("parent_commit_name")
+	if parentCommitName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "parent_commit_name is required")
+		return
+	}
+
+	commitName := r.FormValue("commit_name")
+	if commitName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "commit_name is required")
 		return
 	}
 
@@ -262,7 +271,7 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commit, err := h.service.Push(ctx, userID, teamID, rootCommit, parentCommit, code)
+	commit, err := h.service.Push(ctx, username, teamName, repoName, parentCommitName, commitName, code)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -274,35 +283,32 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 // Checkout handles GET /api/repo/checkout
 func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
-	teamIDStr := r.URL.Query().Get("team_id")
-	teamID, err := uuid.Parse(teamIDStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid team_id format")
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
 		return
 	}
 
-	rootCommitStr := r.URL.Query().Get("root_commit")
-	rootCommit, err := uuid.Parse(rootCommitStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid root_commit format")
+	repoName := r.URL.Query().Get("repo_name")
+	if repoName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "repo_name is required")
 		return
 	}
 
-	commitIDStr := r.URL.Query().Get("commit_id")
-	commitID, err := uuid.Parse(commitIDStr)
-	if err != nil {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid commit_id format")
+	commitName := r.URL.Query().Get("commit_name")
+	if commitName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "commit_name is required")
 		return
 	}
 
-	code, err := h.service.Checkout(ctx, userID, teamID, rootCommit, commitID)
+	code, err := h.service.Checkout(ctx, username, teamName, repoName, commitName)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -318,10 +324,10 @@ func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
@@ -332,19 +338,32 @@ func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get team_id from query or use a default
-	teamIDStr := r.URL.Query().Get("team_id")
-	var teamID uuid.UUID
-	if teamIDStr != "" {
-		var err error
-		teamID, err = uuid.Parse(teamIDStr)
-		if err != nil {
-			h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "invalid team_id format")
-			return
-		}
+	if req.Title == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "title is required")
+		return
+	}
+	if req.PRName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "pr_name is required")
+		return
+	}
+	if req.TeamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
+	if req.RepoName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "repo_name is required")
+		return
+	}
+	if req.SourceCommitName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "source_commit_name is required")
+		return
+	}
+	if req.TargetCommitName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "target_commit_name is required")
+		return
 	}
 
-	pr, err := h.service.CreatePR(ctx, userID, teamID, &req)
+	pr, err := h.service.CreatePR(ctx, username, &req)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -356,16 +375,16 @@ func (h *Handler) CreatePR(w http.ResponseWriter, r *http.Request) {
 // GetMyPRs handles GET /api/pr/my
 func (h *Handler) GetMyPRs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
 	status := r.URL.Query().Get("status")
 
-	prs, err := h.service.GetMyPRs(ctx, userID, status)
+	prs, err := h.service.GetMyPRs(ctx, username, status)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -377,16 +396,16 @@ func (h *Handler) GetMyPRs(w http.ResponseWriter, r *http.Request) {
 // GetReviewPRs handles GET /api/pr/reviews
 func (h *Handler) GetReviewPRs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
 	status := r.URL.Query().Get("status")
 
-	prs, err := h.service.GetReviewPRs(ctx, userID, status)
+	prs, err := h.service.GetReviewPRs(ctx, username, status)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -395,20 +414,29 @@ func (h *Handler) GetReviewPRs(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{"pull_requests": prs})
 }
 
-// ApprovePR handles POST /api/pr/{pr_id}/approve
+// ApprovePR handles POST /api/pr/approve
 func (h *Handler) ApprovePR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
-	vars := mux.Vars(r)
-	prID := vars["pr_id"]
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
 
-	pr, mergeCommit, err := h.service.ApprovePR(ctx, userID, prID)
+	prName := r.URL.Query().Get("pr_name")
+	if prName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "pr_name is required")
+		return
+	}
+
+	pr, mergeCommit, err := h.service.ApprovePR(ctx, username, teamName, prName)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -420,26 +448,35 @@ func (h *Handler) ApprovePR(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// RejectPR handles POST /api/pr/{pr_id}/reject
+// RejectPR handles POST /api/pr/reject
 func (h *Handler) RejectPR(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	log := logger.FromContext(ctx)
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
-	vars := mux.Vars(r)
-	prID := vars["pr_id"]
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
+
+	prName := r.URL.Query().Get("pr_name")
+	if prName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "pr_name is required")
+		return
+	}
 
 	var req domain.RejectPRRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		log.Debug(ctx, "no reject reason provided")
 	}
 
-	pr, err := h.service.RejectPR(ctx, userID, prID, req.Reason)
+	pr, err := h.service.RejectPR(ctx, username, teamName, prName, req.Reason)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -448,20 +485,29 @@ func (h *Handler) RejectPR(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, map[string]interface{}{"pull_request": pr})
 }
 
-// GetPRCode handles GET /api/pr/{pr_id}/code
+// GetPRCode handles GET /api/pr/code
 func (h *Handler) GetPRCode(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	userID := h.getUserID(r)
+	username := h.getUsername(r)
 
-	if userID == "" {
-		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-User-ID header is required")
+	if username == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "X-Username header is required")
 		return
 	}
 
-	vars := mux.Vars(r)
-	prID := vars["pr_id"]
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "team_name is required")
+		return
+	}
 
-	code, err := h.service.GetPRCode(ctx, userID, prID)
+	prName := r.URL.Query().Get("pr_name")
+	if prName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "pr_name is required")
+		return
+	}
+
+	code, err := h.service.GetPRCode(ctx, username, teamName, prName)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return

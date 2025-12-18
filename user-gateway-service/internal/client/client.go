@@ -552,3 +552,133 @@ func (c *CodeStorageClient) Merge(ctx context.Context, teamID, rootCommit, commi
 
 	return &result.Commit, nil
 }
+
+// InitRepositoryWithName initializes a new repository with a name
+func (c *CodeStorageClient) InitRepositoryWithName(ctx context.Context, teamID uuid.UUID, repoName string, code []byte) (*CommitResponse, error) {
+	url := fmt.Sprintf("%s/storage/init", c.baseURL)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	_ = writer.WriteField("team_id", teamID.String())
+	_ = writer.WriteField("commit_name", repoName) // repo name = root commit name
+
+	part, err := writer.CreateFormFile("code", "code.zip")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := part.Write(code); err != nil {
+		return nil, fmt.Errorf("failed to write code: %w", err)
+	}
+	writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Commit CommitResponse `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.Commit, nil
+}
+
+// PushWithName creates a new commit with a name
+func (c *CodeStorageClient) PushWithName(ctx context.Context, teamID, rootCommit, parentCommit uuid.UUID, commitName string, code []byte) (*CommitResponse, error) {
+	url := fmt.Sprintf("%s/storage/push", c.baseURL)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	_ = writer.WriteField("team_id", teamID.String())
+	_ = writer.WriteField("root_commit", rootCommit.String())
+	_ = writer.WriteField("commit_id", parentCommit.String())
+	_ = writer.WriteField("commit_name", commitName)
+
+	part, err := writer.CreateFormFile("code", "code.zip")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create form file: %w", err)
+	}
+	if _, err := part.Write(code); err != nil {
+		return nil, fmt.Errorf("failed to write code: %w", err)
+	}
+	writer.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("commit not found")
+	}
+	if resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Commit CommitResponse `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.Commit, nil
+}
+
+// ResolveCommitByName resolves commit name to commit UUID
+func (c *CodeStorageClient) ResolveCommitByName(ctx context.Context, teamID uuid.UUID, repoName, commitName string) (uuid.UUID, error) {
+	url := fmt.Sprintf("%s/storage/resolve?team_id=%s&repo_name=%s&commit_name=%s",
+		c.baseURL, teamID.String(), repoName, commitName)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return uuid.Nil, fmt.Errorf("commit not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return uuid.Nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		CommitID uuid.UUID `json:"commit_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.CommitID, nil
+}

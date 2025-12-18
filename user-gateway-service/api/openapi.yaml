@@ -20,21 +20,21 @@ tags:
 
 components:
   parameters:
-    UserIdHeader:
-      name: X-User-ID
+    UsernameHeader:
+      name: X-Username
       in: header
       required: true
       schema:
         type: string
-      description: Идентификатор текущего пользователя
+      description: Имя текущего пользователя (строка)
 
-    PRIdPath:
-      name: pr_id
-      in: path
+    PRNameQuery:
+      name: pr_name
+      in: query
       required: true
       schema:
         type: string
-      description: Идентификатор Pull Request
+      description: Имя Pull Request
 
   schemas:
     ErrorResponse:
@@ -68,15 +68,17 @@ components:
 
     UserProfile:
       type: object
-      required: [user_id, username, team_id, team_name, is_active]
+      required: [username, team_name, is_active]
       properties:
         user_id:
           type: string
+          description: ID пользователя (в ответе)
         username:
           type: string
         team_id:
           type: string
           format: uuid
+          description: UUID команды (в ответе)
         team_name:
           type: string
         is_active:
@@ -84,38 +86,50 @@ components:
 
     Commit:
       type: object
-      required: [commit_id, root_commit, parent_commit_ids, created_at]
+      required: [created_at]
       properties:
         commit_id:
           type: string
           format: uuid
+          description: UUID коммита (в ответе)
         root_commit:
           type: string
           format: uuid
+          description: UUID корневого коммита (в ответе)
         parent_commit_ids:
           type: array
           items:
             type: string
             format: uuid
+          description: UUID родительских коммитов (в ответе)
         commit_name:
           type: string
-          nullable: true
+          description: Человекочитаемое имя коммита
+        repo_name:
+          type: string
+          description: Имя репозитория (имя root commit)
         created_at:
           type: string
           format: date-time
 
     PullRequest:
       type: object
-      required: [pr_id, title, author_id, status, reviewer_ids, source_commit, target_commit, created_at]
+      required: [title, author_name, status, created_at]
       properties:
         pr_id:
           type: string
+          description: ID пулл реквеста (в ответе)
+        pr_name:
+          type: string
+          description: Уникальное имя PR для запросов
         title:
           type: string
         author_id:
           type: string
+          description: ID автора (в ответе)
         author_name:
           type: string
+          description: Имя автора
         status:
           type: string
           enum: [OPEN, MERGED, REJECTED]
@@ -123,15 +137,36 @@ components:
           type: array
           items:
             type: string
-        source_commit:
+          description: ID ревьюверов (в ответе)
+        reviewer_names:
+          type: array
+          items:
+            type: string
+          description: Имена ревьюверов
+        source_commit_id:
           type: string
           format: uuid
-        target_commit:
+          description: UUID source коммита (в ответе)
+        source_commit_name:
+          type: string
+          description: Имя source коммита
+        target_commit_id:
           type: string
           format: uuid
-        root_commit:
+          description: UUID target коммита (в ответе)
+        target_commit_name:
+          type: string
+          description: Имя target коммита
+        root_commit_id:
           type: string
           format: uuid
+          description: UUID репозитория (в ответе)
+        repo_name:
+          type: string
+          description: Имя репозитория
+        team_name:
+          type: string
+          description: Имя команды
         created_at:
           type: string
           format: date-time
@@ -151,10 +186,11 @@ components:
 
     TeamMember:
       type: object
-      required: [user_id, username, is_active]
+      required: [username, is_active]
       properties:
         user_id:
           type: string
+          description: ID пользователя (в ответе)
         username:
           type: string
         is_active:
@@ -162,11 +198,12 @@ components:
 
     Team:
       type: object
-      required: [team_id, team_name, members]
+      required: [team_name, members]
       properties:
         team_id:
           type: string
           format: uuid
+          description: UUID команды (в ответе)
         team_name:
           type: string
         members:
@@ -196,7 +233,7 @@ paths:
       tags: [Profile]
       summary: Получить профиль текущего пользователя
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
       responses:
         '200':
           description: Профиль пользователя
@@ -223,7 +260,7 @@ paths:
         Пользователь работает с именами (team_name, username), 
         под капотом всё мапается на UUID.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
       requestBody:
         required: true
         content:
@@ -239,23 +276,20 @@ paths:
                   type: array
                   items:
                     type: object
-                    required: [user_id, username]
+                    required: [username]
                     properties:
-                      user_id:
-                        type: string
                       username:
                         type: string
+                        description: Уникальное имя пользователя
                       is_active:
                         type: boolean
                         default: true
             example:
               team_name: backend
               members:
-                - user_id: alice
-                  username: Alice Smith
+                - username: alice
                   is_active: true
-                - user_id: bob
-                  username: Bob Johnson
+                - username: bob
                   is_active: true
       responses:
         '201':
@@ -280,7 +314,7 @@ paths:
       summary: Получить команду по имени
       description: Возвращает информацию о команде включая UUID и участников.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
         - name: team_name
           in: query
           required: true
@@ -310,15 +344,21 @@ paths:
       summary: Инициализировать новый репозиторий для команды
       description: Создаёт root commit с начальным кодом. Пользователь должен быть активным.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [code]
+              required: [team_name, repo_name, code]
               properties:
+                team_name:
+                  type: string
+                  description: Имя команды
+                repo_name:
+                  type: string
+                  description: Уникальное имя репозитория (станет именем root commit)
                 code:
                   type: string
                   format: binary
@@ -353,23 +393,27 @@ paths:
       summary: Создать новый коммит
       description: Создаёт коммит поверх существующего. Проверяет доступ к репозиторию команды.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
       requestBody:
         required: true
         content:
           multipart/form-data:
             schema:
               type: object
-              required: [root_commit, parent_commit, code]
+              required: [team_name, repo_name, parent_commit_name, commit_name, code]
               properties:
-                root_commit:
+                team_name:
                   type: string
-                  format: uuid
-                  description: Идентификатор репозитория (root commit)
-                parent_commit:
+                  description: Имя команды
+                repo_name:
                   type: string
-                  format: uuid
-                  description: Родительский коммит
+                  description: Имя репозитория (имя root commit)
+                parent_commit_name:
+                  type: string
+                  description: Имя родительского коммита
+                commit_name:
+                  type: string
+                  description: Имя нового коммита
                 code:
                   type: string
                   format: binary
@@ -404,21 +448,25 @@ paths:
       summary: Получить код коммита
       description: Возвращает ZIP архив с кодом. Проверяет доступ к репозиторию команды.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
-        - name: root_commit
+        - $ref: '#/components/parameters/UsernameHeader'
+        - name: team_name
           in: query
           required: true
           schema:
             type: string
-            format: uuid
-          description: Идентификатор репозитория
-        - name: commit_id
+          description: Имя команды
+        - name: repo_name
           in: query
           required: true
           schema:
             type: string
-            format: uuid
-          description: Идентификатор коммита
+          description: Имя репозитория
+        - name: commit_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя коммита
       responses:
         '200':
           description: ZIP архив с кодом
@@ -448,35 +496,40 @@ paths:
         Создаёт PR и автоматически назначает ревьюверов из команды.
         Проверяет, что пользователь имеет доступ к репозиторию.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [title, root_commit, source_commit, target_commit]
+              required: [title, pr_name, team_name, repo_name, source_commit_name, target_commit_name]
               properties:
                 title:
                   type: string
                   description: Название PR
-                root_commit:
+                pr_name:
                   type: string
-                  format: uuid
-                  description: Идентификатор репозитория
-                source_commit:
+                  description: Уникальное имя PR
+                team_name:
                   type: string
-                  format: uuid
-                  description: Коммит с изменениями (откуда мержим)
-                target_commit:
+                  description: Имя команды
+                repo_name:
                   type: string
-                  format: uuid
-                  description: Целевой коммит (куда мержим)
+                  description: Имя репозитория
+                source_commit_name:
+                  type: string
+                  description: Имя коммита с изменениями (откуда мержим)
+                target_commit_name:
+                  type: string
+                  description: Имя целевого коммита (куда мержим)
             example:
               title: "Add user authentication"
-              root_commit: "123e4567-e89b-12d3-a456-426614174000"
-              source_commit: "123e4567-e89b-12d3-a456-426614174001"
-              target_commit: "123e4567-e89b-12d3-a456-426614174002"
+              pr_name: "auth-feature"
+              team_name: "backend"
+              repo_name: "main-service"
+              source_commit_name: "feature-branch"
+              target_commit_name: "main"
       responses:
         '201':
           description: PR создан
@@ -507,7 +560,7 @@ paths:
       summary: Получить мои Pull Requests
       description: Возвращает список PR, где текущий пользователь является автором.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
         - name: status
           in: query
           required: false
@@ -529,7 +582,7 @@ paths:
       summary: Получить PR на ревью
       description: Возвращает список PR, где текущий пользователь назначен ревьювером.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/UsernameHeader'
         - name: status
           in: query
           required: false
@@ -545,7 +598,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/PullRequestList'
 
-  /api/pr/{pr_id}/approve:
+  /api/pr/approve:
     post:
       tags: [PullRequests]
       summary: Одобрить PR
@@ -553,8 +606,19 @@ paths:
         Одобряет PR и автоматически выполняет merge коммитов в code-storage.
         Только назначенный ревьювер может одобрить PR.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
-        - $ref: '#/components/parameters/PRIdPath'
+        - $ref: '#/components/parameters/UsernameHeader'
+        - name: team_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя команды
+        - name: pr_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя Pull Request
       responses:
         '200':
           description: PR одобрен и смержен
@@ -587,14 +651,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /api/pr/{pr_id}/reject:
+  /api/pr/reject:
     post:
       tags: [PullRequests]
       summary: Отклонить PR
       description: Отклоняет PR. Только назначенный ревьювер может отклонить PR.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
-        - $ref: '#/components/parameters/PRIdPath'
+        - $ref: '#/components/parameters/UsernameHeader'
+        - name: team_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя команды
+        - name: pr_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя Pull Request
       requestBody:
         required: false
         content:
@@ -629,14 +704,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /api/pr/{pr_id}/code:
+  /api/pr/code:
     get:
       tags: [PullRequests]
       summary: Получить код PR
       description: Возвращает ZIP архив с кодом source commit PR. Для ревью.
       parameters:
-        - $ref: '#/components/parameters/UserIdHeader'
-        - $ref: '#/components/parameters/PRIdPath'
+        - $ref: '#/components/parameters/UsernameHeader'
+        - name: team_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя команды
+        - name: pr_name
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Имя Pull Request
       responses:
         '200':
           description: ZIP архив с кодом
