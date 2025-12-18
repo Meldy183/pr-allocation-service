@@ -22,7 +22,7 @@ func NewService(s storage.Storage) *Service {
 }
 
 // InitRepository initializes a new repository for a team with the initial code
-func (s *Service) InitRepository(ctx context.Context, teamID uuid.UUID, code []byte) (*domain.Commit, error) {
+func (s *Service) InitRepository(ctx context.Context, teamID uuid.UUID, commitName string, code []byte) (*domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
 	// Check if team exists
@@ -36,7 +36,7 @@ func (s *Service) InitRepository(ctx context.Context, teamID uuid.UUID, code []b
 	}
 
 	// Create root commit
-	commit, err := s.storage.InitRepository(ctx, teamID, code)
+	commit, err := s.storage.InitRepository(ctx, teamID, commitName, code)
 	if err != nil {
 		log.Error(ctx, "failed to initialize repository", zap.Error(err))
 		return nil, err
@@ -45,13 +45,14 @@ func (s *Service) InitRepository(ctx context.Context, teamID uuid.UUID, code []b
 	log.Info(ctx, "repository initialized",
 		zap.String("team_id", teamID.String()),
 		zap.String("root_commit", commit.ID.String()),
+		zap.String("commit_name", commitName),
 	)
 
 	return commit, nil
 }
 
 // Push creates a new commit on top of an existing parent commit
-func (s *Service) Push(ctx context.Context, teamID, rootCommit, parentCommitID uuid.UUID, code []byte) (*domain.Commit, error) {
+func (s *Service) Push(ctx context.Context, teamID, rootCommit, parentCommitID uuid.UUID, commitName string, code []byte) (*domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
 	// Check if team exists
@@ -85,7 +86,7 @@ func (s *Service) Push(ctx context.Context, teamID, rootCommit, parentCommitID u
 	}
 
 	// Create new commit
-	commit, err := s.storage.CreateCommit(ctx, teamID, rootCommit, parentCommitID, code)
+	commit, err := s.storage.CreateCommit(ctx, teamID, rootCommit, parentCommitID, commitName, code)
 	if err != nil {
 		log.Error(ctx, "failed to create commit", zap.Error(err))
 		return nil, err
@@ -93,6 +94,7 @@ func (s *Service) Push(ctx context.Context, teamID, rootCommit, parentCommitID u
 
 	log.Info(ctx, "commit created",
 		zap.String("commit_id", commit.ID.String()),
+		zap.String("commit_name", commitName),
 		zap.String("parent_id", parentCommitID.String()),
 	)
 

@@ -37,6 +37,7 @@ function App() {
   const [commits, setCommits] = useState<CommitNode[]>([]);
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [newRepoName, setNewRepoName] = useState('');
+  const [initCommitName, setInitCommitName] = useState('main');
   const [newCommitName, setNewCommitName] = useState('');
   const [parentCommitName, setParentCommitName] = useState('');
 
@@ -138,17 +139,17 @@ function App() {
   // Repository handlers
   const handleInitRepo = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !newRepoName.trim() || !team) {
-      setError('Repository name and code file are required');
+    if (!file || !newRepoName.trim() || !initCommitName.trim() || !team) {
+      setError('Repository name, commit name and code file are required');
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const commit = await api.initRepository(username, team.team_name, newRepoName, file);
+      const commit = await api.initRepository(username, team.team_name, newRepoName, initCommitName, file);
       const newCommit: CommitNode = {
         id: commit.commit_id || commit.root_commit || '',
-        name: commit.commit_name || newRepoName,
+        name: commit.commit_name || initCommitName,
         parentIds: [],
         isRoot: true,
         branch: 'main',
@@ -156,6 +157,7 @@ function App() {
       setCommits([newCommit]);
       setCurrentRepo(newRepoName);
       setNewRepoName('');
+      setInitCommitName('main');
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -436,6 +438,11 @@ function App() {
                       value={newRepoName}
                       onChange={(e) => setNewRepoName(e.target.value)}
                     />
+                    <Input
+                      placeholder="Initial commit name (e.g. main)"
+                      value={initCommitName}
+                      onChange={(e) => setInitCommitName(e.target.value)}
+                    />
                     <div>
                       <label className="block text-sm font-medium mb-2">
                         Initial code (ZIP)
@@ -444,7 +451,7 @@ function App() {
                         type="file"
                         accept=".zip"
                         onChange={handleInitRepo}
-                        disabled={!newRepoName || loading}
+                        disabled={!newRepoName || !initCommitName || loading}
                       />
                     </div>
                   </CardContent>

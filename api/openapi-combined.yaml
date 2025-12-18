@@ -511,7 +511,7 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [team_name, repo_name, code]
+              required: [team_name, repo_name, commit_name, code]
               properties:
                 team_name:
                   type: string
@@ -519,6 +519,9 @@ paths:
                 repo_name:
                   type: string
                   description: Уникальное имя репозитория
+                commit_name:
+                  type: string
+                  description: Имя начального коммита (например "main" или "initial")
                 code:
                   type: string
                   format: binary

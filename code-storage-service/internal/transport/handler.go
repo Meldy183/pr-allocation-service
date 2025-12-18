@@ -86,6 +86,9 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get commit_name (optional but recommended)
+	commitName := r.FormValue("commit_name")
+
 	// Get code file
 	file, _, err := r.FormFile("code")
 	if err != nil {
@@ -103,7 +106,7 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Initialize repository
-	commit, err := h.service.InitRepository(ctx, teamID, code)
+	commit, err := h.service.InitRepository(ctx, teamID, commitName, code)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -148,6 +151,9 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get commit_name (optional but recommended)
+	commitName := r.FormValue("commit_name")
+
 	// Get code file
 	file, _, err := r.FormFile("code")
 	if err != nil {
@@ -165,7 +171,7 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create commit
-	commit, err := h.service.Push(ctx, teamID, rootCommit, parentCommitID, code)
+	commit, err := h.service.Push(ctx, teamID, rootCommit, parentCommitID, commitName, code)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return

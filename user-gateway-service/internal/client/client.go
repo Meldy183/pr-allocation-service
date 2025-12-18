@@ -650,10 +650,10 @@ func (c *CodeStorageClient) PushWithName(ctx context.Context, teamID, rootCommit
 	return &result.Commit, nil
 }
 
-// ResolveCommitByName resolves commit name to commit UUID
-func (c *CodeStorageClient) ResolveCommitByName(ctx context.Context, teamID uuid.UUID, repoName, commitName string) (uuid.UUID, error) {
-	url := fmt.Sprintf("%s/storage/resolve?team_id=%s&repo_name=%s&commit_name=%s",
-		c.baseURL, teamID.String(), repoName, commitName)
+// GetCommitIDByName gets commit ID by name from code-storage
+func (c *CodeStorageClient) GetCommitIDByName(ctx context.Context, teamID, rootCommit uuid.UUID, commitName string) (uuid.UUID, error) {
+	url := fmt.Sprintf("%s/storage/commitID?team_id=%s&root_commit=%s&name=%s",
+		c.baseURL, teamID.String(), rootCommit.String(), commitName)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -670,7 +670,8 @@ func (c *CodeStorageClient) ResolveCommitByName(ctx context.Context, teamID uuid
 		return uuid.Nil, fmt.Errorf("commit not found")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return uuid.Nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return uuid.Nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	var result struct {
@@ -681,4 +682,11 @@ func (c *CodeStorageClient) ResolveCommitByName(ctx context.Context, teamID uuid
 	}
 
 	return result.CommitID, nil
+}
+
+// ResolveCommitByName is deprecated, use GetCommitIDByName instead
+func (c *CodeStorageClient) ResolveCommitByName(ctx context.Context, teamID uuid.UUID, repoName, commitName string) (uuid.UUID, error) {
+	// This method is no longer used - commits are resolved via GetCommitIDByName
+	// which requires root_commit UUID
+	return uuid.Nil, fmt.Errorf("ResolveCommitByName is deprecated, use service.resolveCommitByName instead")
 }

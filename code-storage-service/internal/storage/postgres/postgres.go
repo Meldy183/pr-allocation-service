@@ -67,7 +67,7 @@ func (s *Storage) TeamExists(ctx context.Context, teamID uuid.UUID) (bool, error
 }
 
 // InitRepository creates a root commit for a new repository
-func (s *Storage) InitRepository(ctx context.Context, teamID uuid.UUID, code []byte) (*domain.Commit, error) {
+func (s *Storage) InitRepository(ctx context.Context, teamID uuid.UUID, commitName string, code []byte) (*domain.Commit, error) {
 	commitID := uuid.New()
 	now := time.Now()
 
@@ -93,6 +93,14 @@ func (s *Storage) InitRepository(ctx context.Context, teamID uuid.UUID, code []b
 
 	commit.ParentCommitIDs = stringArrayToUUIDs(parentIDs)
 	commit.Code = code
+
+	// Save commit name if provided
+	if commitName != "" {
+		if err := s.SetCommitName(ctx, teamID, commit.RootCommit, commit.ID, commitName); err != nil {
+			return nil, fmt.Errorf("failed to set commit name: %w", err)
+		}
+		commit.CommitName = &commitName
+	}
 
 	return &commit, nil
 }
@@ -153,7 +161,7 @@ func (s *Storage) GetCommitCode(ctx context.Context, teamID, rootCommit, commitI
 }
 
 // CreateCommit creates a new commit with a parent
-func (s *Storage) CreateCommit(ctx context.Context, teamID, rootCommit, parentID uuid.UUID, code []byte) (*domain.Commit, error) {
+func (s *Storage) CreateCommit(ctx context.Context, teamID, rootCommit, parentID uuid.UUID, commitName string, code []byte) (*domain.Commit, error) {
 	commitID := uuid.New()
 	now := time.Now()
 	parentIDs := pq.StringArray{parentID.String()}
@@ -180,6 +188,14 @@ func (s *Storage) CreateCommit(ctx context.Context, teamID, rootCommit, parentID
 
 	commit.ParentCommitIDs = stringArrayToUUIDs(returnedParentIDs)
 	commit.Code = code
+
+	// Save commit name if provided
+	if commitName != "" {
+		if err := s.SetCommitName(ctx, teamID, rootCommit, commit.ID, commitName); err != nil {
+			return nil, fmt.Errorf("failed to set commit name: %w", err)
+		}
+		commit.CommitName = &commitName
+	}
 
 	return &commit, nil
 }

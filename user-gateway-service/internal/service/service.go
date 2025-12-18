@@ -19,6 +19,8 @@ type Service struct {
 	codeClient *client.CodeStorageClient
 	// In-memory storage for PR metadata (in production would be in DB)
 	prMetadata map[string]*PRMetadata
+	// In-memory storage for repo -> root_commit mapping
+	repoRootCommits map[string]uuid.UUID // key: "teamID:repoName"
 }
 
 // PRMetadata stores additional PR info not in pr-allocation-service
@@ -37,9 +39,10 @@ type PRMetadata struct {
 // NewService creates a new Service instance
 func NewService(prClient *client.PRAllocationClient, codeClient *client.CodeStorageClient) *Service {
 	return &Service{
-		prClient:   prClient,
-		codeClient: codeClient,
-		prMetadata: make(map[string]*PRMetadata),
+		prClient:        prClient,
+		codeClient:      codeClient,
+		prMetadata:      make(map[string]*PRMetadata),
+		repoRootCommits: make(map[string]uuid.UUID),
 	}
 }
 
@@ -140,7 +143,8 @@ func (s *Service) ResolveTeamName(ctx context.Context, teamName string) (uuid.UU
 }
 
 // InitRepository initializes a new repository using names
-func (s *Service) InitRepository(ctx context.Context, username, teamName, repoName string, code []byte) (*domain.Commit, error) {
+// InitRepository initializes a new repository using names
+func (s *Service) InitRepository(ctx context.Context, username, teamName, repoName, commitName string, code []byte) (*domain.Commit, error) {
 	log := logger.FromContext(ctx)
 
 	// Resolve team name to UUID
@@ -155,8 +159,8 @@ func (s *Service) InitRepository(ctx context.Context, username, teamName, repoNa
 		return nil, err
 	}
 
-	// Initialize repository in code-storage with repo name as commit name
-	commit, err := s.codeClient.InitRepositoryWithName(ctx, teamID, repoName, code)
+	// Initialize repository in code-storage with commit name
+	commit, err := s.codeClient.InitRepositoryWithName(ctx, teamID, commitName, code)
 	if err != nil {
 		log.Error(ctx, "failed to init repository", zap.Error(err))
 		if strings.Contains(err.Error(), "not found") {
@@ -165,9 +169,14 @@ func (s *Service) InitRepository(ctx context.Context, username, teamName, repoNa
 		return nil, fmt.Errorf("failed to init repository: %w", err)
 	}
 
+	// Save repo -> root_commit mapping
+	repoKey := fmt.Sprintf("%s:%s", teamID.String(), repoName)
+	s.repoRootCommits[repoKey] = commit.RootCommit
+
 	log.Info(ctx, "repository initialized",
 		zap.String("username", username),
 		zap.String("repo_name", repoName),
+		zap.String("commit_name", commitName),
 		zap.String("root_commit", commit.RootCommit.String()),
 	)
 
@@ -175,7 +184,7 @@ func (s *Service) InitRepository(ctx context.Context, username, teamName, repoNa
 		CommitID:        commit.CommitID,
 		RootCommit:      commit.RootCommit,
 		ParentCommitIDs: commit.ParentCommitIDs,
-		CommitName:      &repoName,
+		CommitName:      &commitName,
 		RepoName:        &repoName,
 		CreatedAt:       commit.CreatedAt,
 	}, nil
@@ -197,14 +206,15 @@ func (s *Service) Push(ctx context.Context, username, teamName, repoName, parent
 		return nil, domain.ErrTeamNotFound
 	}
 
-	// Resolve repo name (root commit) and parent commit by name
-	rootCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, repoName)
-	if err != nil {
-		log.Error(ctx, "failed to resolve repo", zap.Error(err))
+	// Get root commit from cache
+	rootCommit, ok := s.getRootCommit(teamID, repoName)
+	if !ok {
+		log.Error(ctx, "repository not found in cache", zap.String("repo", repoName))
 		return nil, domain.ErrCommitNotFound
 	}
 
-	parentCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, parentCommitName)
+	// Resolve parent commit by name
+	parentCommit, err := s.resolveCommitByName(ctx, teamID, repoName, parentCommitName)
 	if err != nil {
 		log.Error(ctx, "failed to resolve parent commit", zap.Error(err))
 		return nil, domain.ErrCommitNotFound
@@ -252,14 +262,15 @@ func (s *Service) Checkout(ctx context.Context, username, teamName, repoName, co
 		return nil, domain.ErrTeamNotFound
 	}
 
-	// Resolve repo and commit by name
-	rootCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, repoName)
-	if err != nil {
-		log.Error(ctx, "failed to resolve repo", zap.Error(err))
+	// Get root commit from cache
+	rootCommit, ok := s.getRootCommit(teamID, repoName)
+	if !ok {
+		log.Error(ctx, "repository not found in cache", zap.String("repo", repoName))
 		return nil, domain.ErrCommitNotFound
 	}
 
-	commitID, err := s.codeClient.ResolveCommitByName(ctx, teamID, repoName, commitName)
+	// Resolve commit by name
+	commitID, err := s.resolveCommitByName(ctx, teamID, repoName, commitName)
 	if err != nil {
 		log.Error(ctx, "failed to resolve commit", zap.Error(err))
 		return nil, domain.ErrCommitNotFound
@@ -298,20 +309,22 @@ func (s *Service) CreatePR(ctx context.Context, username string, req *domain.Cre
 		return nil, domain.ErrTeamNotFound
 	}
 
-	// Resolve repo and commits by name
-	rootCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, req.RepoName, req.RepoName)
-	if err != nil {
-		log.Error(ctx, "failed to resolve repo", zap.Error(err))
+	// Get root commit from cache
+	rootCommit, ok := s.getRootCommit(teamID, req.RepoName)
+	if !ok {
+		log.Error(ctx, "repository not found in cache", zap.String("repo", req.RepoName))
 		return nil, domain.ErrCommitNotFound
 	}
 
-	sourceCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, req.RepoName, req.SourceCommitName)
+	// Resolve source commit by name
+	sourceCommit, err := s.resolveCommitByName(ctx, teamID, req.RepoName, req.SourceCommitName)
 	if err != nil {
 		log.Error(ctx, "failed to resolve source commit", zap.Error(err))
 		return nil, domain.ErrCommitNotFound
 	}
 
-	targetCommit, err := s.codeClient.ResolveCommitByName(ctx, teamID, req.RepoName, req.TargetCommitName)
+	// Resolve target commit by name
+	targetCommit, err := s.resolveCommitByName(ctx, teamID, req.RepoName, req.TargetCommitName)
 	if err != nil {
 		log.Error(ctx, "failed to resolve target commit", zap.Error(err))
 		return nil, domain.ErrCommitNotFound
@@ -580,4 +593,28 @@ func (s *Service) verifyUserAccess(ctx context.Context, username, teamName strin
 	}
 
 	return nil
+}
+
+// getRootCommit gets root commit UUID for a repo from cache
+func (s *Service) getRootCommit(teamID uuid.UUID, repoName string) (uuid.UUID, bool) {
+	repoKey := fmt.Sprintf("%s:%s", teamID.String(), repoName)
+	rootCommit, ok := s.repoRootCommits[repoKey]
+	return rootCommit, ok
+}
+
+// resolveCommitByName resolves a commit name to UUID using code-storage
+func (s *Service) resolveCommitByName(ctx context.Context, teamID uuid.UUID, repoName, commitName string) (uuid.UUID, error) {
+	// First get root commit from cache
+	rootCommit, ok := s.getRootCommit(teamID, repoName)
+	if !ok {
+		return uuid.Nil, fmt.Errorf("repository not found: %s", repoName)
+	}
+
+	// If commitName equals repoName, it's the root commit itself
+	if commitName == repoName {
+		return rootCommit, nil
+	}
+
+	// Otherwise resolve via code-storage
+	return s.codeClient.GetCommitIDByName(ctx, teamID, rootCommit, commitName)
 }

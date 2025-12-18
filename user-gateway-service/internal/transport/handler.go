@@ -194,6 +194,13 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get commit_name from form
+	commitName := r.FormValue("commit_name")
+	if commitName == "" {
+		h.respondError(w, http.StatusBadRequest, domain.ErrCodeInvalidRequest, "commit_name is required")
+		return
+	}
+
 	// Get code file
 	file, _, err := r.FormFile("code")
 	if err != nil {
@@ -208,7 +215,7 @@ func (h *Handler) InitRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commit, err := h.service.InitRepository(ctx, username, teamName, repoName, code)
+	commit, err := h.service.InitRepository(ctx, username, teamName, repoName, commitName, code)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return

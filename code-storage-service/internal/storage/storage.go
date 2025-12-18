@@ -13,10 +13,10 @@ type Storage interface {
 	TeamExists(ctx context.Context, teamID uuid.UUID) (bool, error)
 
 	// Repository/Commit operations
-	InitRepository(ctx context.Context, teamID uuid.UUID, code []byte) (*domain.Commit, error)
+	InitRepository(ctx context.Context, teamID uuid.UUID, commitName string, code []byte) (*domain.Commit, error)
 	GetCommit(ctx context.Context, teamID, rootCommit, commitID uuid.UUID) (*domain.Commit, error)
 	GetCommitCode(ctx context.Context, teamID, rootCommit, commitID uuid.UUID) ([]byte, error)
-	CreateCommit(ctx context.Context, teamID, rootCommit, parentID uuid.UUID, code []byte) (*domain.Commit, error)
+	CreateCommit(ctx context.Context, teamID, rootCommit, parentID uuid.UUID, commitName string, code []byte) (*domain.Commit, error)
 	MergeCommits(ctx context.Context, teamID, rootCommit, commitID1, commitID2 uuid.UUID) (*domain.Commit, error)
 	IsLeafCommit(ctx context.Context, teamID, rootCommit, commitID uuid.UUID) (bool, error)
 	RootCommitExists(ctx context.Context, teamID, rootCommit uuid.UUID) (bool, error)

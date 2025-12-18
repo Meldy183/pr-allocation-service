@@ -109,11 +109,13 @@ export async function initRepository(
   username: string,
   teamName: string,
   repoName: string,
+  commitName: string,
   code: File
 ): Promise<Commit> {
   const formData = new FormData();
   formData.append('team_name', teamName);
   formData.append('repo_name', repoName);
+  formData.append('commit_name', commitName);
   formData.append('code', code);
 
   const res = await fetch(`${API_BASE}/repo/init`, {
