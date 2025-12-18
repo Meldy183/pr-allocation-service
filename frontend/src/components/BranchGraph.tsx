@@ -1,4 +1,3 @@
-import React from 'react';
 import { cn } from '@/lib/utils';
 
 export interface CommitNode {
@@ -17,98 +16,196 @@ interface BranchGraphProps {
 }
 
 const BRANCH_COLORS = [
-  'bg-blue-500',
-  'bg-green-500',
-  'bg-purple-500',
-  'bg-orange-500',
-  'bg-pink-500',
-  'bg-cyan-500',
+  '#3b82f6', // blue
+  '#22c55e', // green
+  '#a855f7', // purple
+  '#f97316', // orange
+  '#ec4899', // pink
+  '#06b6d4', // cyan
+  '#eab308', // yellow
 ];
 
+interface LayoutNode {
+  commit: CommitNode;
+  x: number; // column (branch lane)
+  y: number; // row
+}
+
 export function BranchGraph({ commits, selectedCommit, onCommitClick }: BranchGraphProps) {
-  // Simple layout: vertical timeline
-  const getBranchColor = (branch?: string) => {
-    if (!branch) return BRANCH_COLORS[0];
-    const index = Math.abs(branch.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % BRANCH_COLORS.length;
-    return BRANCH_COLORS[index];
-  };
+  // Build layout with proper branching
+  const layout = buildLayout(commits);
+
+  const ROW_HEIGHT = 70;
+  const COL_WIDTH = 60;
+  const PADDING = 40;
+  const NODE_RADIUS = 12;
+
+  const maxCol = Math.max(...layout.map(n => n.x), 0);
+  const svgWidth = Math.max((maxCol + 1) * COL_WIDTH + PADDING * 2, 200);
+  const svgHeight = layout.length * ROW_HEIGHT + PADDING * 2;
+
+  const getNodePos = (node: LayoutNode) => ({
+    x: PADDING + node.x * COL_WIDTH + COL_WIDTH / 2,
+    y: PADDING + node.y * ROW_HEIGHT + ROW_HEIGHT / 2,
+  });
+
+  const getColor = (col: number) => BRANCH_COLORS[col % BRANCH_COLORS.length];
+
+  // Build edges
+  const edges: { from: LayoutNode; to: LayoutNode; isMerge: boolean }[] = [];
+  layout.forEach(node => {
+    node.commit.parentIds.forEach(parentId => {
+      const parent = layout.find(n => n.commit.id === parentId);
+      if (parent) {
+        edges.push({
+          from: node,
+          to: parent,
+          isMerge: node.commit.isMerge || node.x !== parent.x
+        });
+      }
+    });
+  });
 
   return (
-    <div className="relative p-4">
-      <svg className="absolute top-0 left-0 w-full h-full pointer-events-none" style={{ zIndex: 0 }}>
-        {/* Draw lines between commits */}
-        {commits.map((commit, index) => {
-          const y = index * 80 + 40;
-          return commit.parentIds.map((parentId) => {
-            const parentIndex = commits.findIndex((c) => c.id === parentId);
-            if (parentIndex === -1) return null;
-            const parentY = parentIndex * 80 + 40;
+    <div className="overflow-auto">
+      <div className="relative" style={{ minWidth: svgWidth, minHeight: svgHeight }}>
+        <svg
+          width={svgWidth}
+          height={svgHeight}
+          className="absolute top-0 left-0"
+        >
+          {/* Draw edges */}
+          {edges.map(({ from, to, isMerge }, idx) => {
+            const fromPos = getNodePos(from);
+            const toPos = getNodePos(to);
 
+            // Curved path for branches/merges
+            if (from.x !== to.x) {
+              const midY = (fromPos.y + toPos.y) / 2;
+              return (
+                <path
+                  key={`edge-${idx}`}
+                  d={`M ${fromPos.x} ${fromPos.y} 
+                      C ${fromPos.x} ${midY}, ${toPos.x} ${midY}, ${toPos.x} ${toPos.y}`}
+                  stroke={isMerge ? '#a855f7' : getColor(Math.min(from.x, to.x))}
+                  strokeWidth="2"
+                  fill="none"
+                  strokeDasharray={isMerge ? "4,4" : undefined}
+                />
+              );
+            }
+
+            // Straight line for same branch
             return (
               <line
-                key={`${commit.id}-${parentId}`}
-                x1="50"
-                y1={y}
-                x2="50"
-                y2={parentY}
-                stroke="#94a3b8"
+                key={`edge-${idx}`}
+                x1={fromPos.x}
+                y1={fromPos.y}
+                x2={toPos.x}
+                y2={toPos.y}
+                stroke={getColor(from.x)}
                 strokeWidth="2"
               />
             );
-          });
-        })}
-      </svg>
+          })}
 
-      <div className="relative" style={{ zIndex: 1 }}>
-        {commits.map((commit, index) => (
-          <div
-            key={commit.id}
-            className="flex items-center gap-4 mb-8 cursor-pointer hover:bg-slate-50 rounded-lg p-2 transition-colors"
-            onClick={() => onCommitClick?.(commit)}
-          >
-            {/* Commit dot */}
-            <div className="relative flex-shrink-0 w-12 flex justify-center">
-              <div
-                className={cn(
-                  'w-6 h-6 rounded-full border-4 border-white shadow-md transition-transform',
-                  getBranchColor(commit.branch),
-                  selectedCommit === commit.id && 'ring-2 ring-blue-400 ring-offset-2 scale-110',
-                  commit.isMerge && 'ring-2 ring-purple-400'
+          {/* Draw nodes */}
+          {layout.map((node) => {
+            const pos = getNodePos(node);
+            const isSelected = selectedCommit === node.commit.id;
+
+            return (
+              <g key={node.commit.id}>
+                {/* Selection ring */}
+                {isSelected && (
+                  <circle
+                    cx={pos.x}
+                    cy={pos.y}
+                    r={NODE_RADIUS + 6}
+                    fill="none"
+                    stroke="#3b82f6"
+                    strokeWidth="2"
+                  />
                 )}
-              />
-              {commit.isRoot && (
-                <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[10px] text-slate-400">
-                  root
-                </div>
-              )}
-            </div>
+                {/* Merge indicator */}
+                {node.commit.isMerge && (
+                  <circle
+                    cx={pos.x}
+                    cy={pos.y}
+                    r={NODE_RADIUS + 3}
+                    fill="none"
+                    stroke="#a855f7"
+                    strokeWidth="2"
+                  />
+                )}
+                {/* Node circle */}
+                <circle
+                  cx={pos.x}
+                  cy={pos.y}
+                  r={NODE_RADIUS}
+                  fill={getColor(node.x)}
+                  stroke="white"
+                  strokeWidth="3"
+                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => onCommitClick?.(node.commit)}
+                />
+                {/* Root indicator */}
+                {node.commit.isRoot && (
+                  <circle
+                    cx={pos.x}
+                    cy={pos.y}
+                    r={4}
+                    fill="white"
+                  />
+                )}
+              </g>
+            );
+          })}
+        </svg>
 
-            {/* Commit info */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-medium text-slate-900 truncate">
-                  {commit.name}
+        {/* Labels overlay */}
+        <div className="absolute top-0 left-0" style={{ width: svgWidth, height: svgHeight }}>
+          {layout.map((node) => {
+            const pos = getNodePos(node);
+
+            return (
+              <div
+                key={`label-${node.commit.id}`}
+                className={cn(
+                  "absolute flex items-center gap-2 cursor-pointer",
+                  "hover:bg-slate-100/80 rounded px-2 py-1 transition-colors"
+                )}
+                style={{
+                  left: pos.x + NODE_RADIUS + 8,
+                  top: pos.y - 12,
+                }}
+                onClick={() => onCommitClick?.(node.commit)}
+              >
+                <span className="font-mono text-sm font-medium text-slate-900 whitespace-nowrap">
+                  {node.commit.name}
                 </span>
-                {commit.isMerge && (
-                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                {node.commit.isMerge && (
+                  <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
                     merge
                   </span>
                 )}
-                {commit.branch && (
-                  <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                    {commit.branch}
+                {node.commit.isRoot && (
+                  <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                    root
+                  </span>
+                )}
+                {node.commit.branch && !node.commit.isMerge && !node.commit.isRoot && (
+                  <span className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                    {node.commit.branch}
                   </span>
                 )}
               </div>
-              <div className="text-xs text-slate-500 font-mono truncate">
-                {commit.id.slice(0, 8)}...
-              </div>
-            </div>
-          </div>
-        ))}
+            );
+          })}
+        </div>
 
         {commits.length === 0 && (
-          <div className="text-center text-slate-500 py-8">
+          <div className="flex items-center justify-center h-40 text-slate-500">
             No commits yet. Initialize a repository to get started.
           </div>
         )}
@@ -117,3 +214,107 @@ export function BranchGraph({ commits, selectedCommit, onCommitClick }: BranchGr
   );
 }
 
+// Build layout: assign x (column/lane) and y (row) to each commit
+function buildLayout(commits: CommitNode[]): LayoutNode[] {
+  if (commits.length === 0) return [];
+
+  const layout: LayoutNode[] = [];
+  const commitMap = new Map<string, CommitNode>();
+  const childrenMap = new Map<string, string[]>();
+
+  // Build maps
+  commits.forEach(c => {
+    commitMap.set(c.id, c);
+    c.parentIds.forEach(pid => {
+      const children = childrenMap.get(pid) || [];
+      children.push(c.id);
+      childrenMap.set(pid, children);
+    });
+  });
+
+  const nodeColumns = new Map<string, number>();
+
+  // Assign columns based on branch lanes
+  let currentCol = 0;
+
+  // Process in topological order (parents before children)
+  // But display children first (newer at top)
+  const sorted = topologicalSort(commits);
+
+  sorted.forEach((commit, index) => {
+    if (commit.parentIds.length === 0 || commit.isRoot) {
+      // Root commit - main lane
+      nodeColumns.set(commit.id, 0);
+    } else if (commit.isMerge && commit.parentIds.length >= 2) {
+      // Merge commit - goes to target branch lane (first parent)
+      const firstParentCol = nodeColumns.get(commit.parentIds[0]) ?? 0;
+      nodeColumns.set(commit.id, firstParentCol);
+    } else {
+      // Regular commit
+      const parentId = commit.parentIds[0];
+      const parentCol = nodeColumns.get(parentId);
+      const siblings = childrenMap.get(parentId) || [];
+
+      if (siblings.length > 1) {
+        // Multiple children from same parent = branching
+        const siblingIndex = siblings.indexOf(commit.id);
+        if (siblingIndex === 0) {
+          // First child stays on parent's lane
+          nodeColumns.set(commit.id, parentCol ?? 0);
+        } else {
+          // Other children get new lanes
+          currentCol++;
+          nodeColumns.set(commit.id, currentCol);
+        }
+      } else {
+        // Single child - stays on parent's lane
+        nodeColumns.set(commit.id, parentCol ?? 0);
+      }
+    }
+  });
+
+  // Build layout array
+  sorted.forEach((commit, index) => {
+    layout.push({
+      commit,
+      x: nodeColumns.get(commit.id) ?? 0,
+      y: index,
+    });
+  });
+
+  return layout;
+}
+
+// Topological sort - children before parents (newer commits first)
+function topologicalSort(commits: CommitNode[]): CommitNode[] {
+  const result: CommitNode[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  function visit(commit: CommitNode) {
+    if (visited.has(commit.id)) return;
+    if (visiting.has(commit.id)) return; // cycle detection
+
+    visiting.add(commit.id);
+
+    // Visit children first (they should appear before parents in display)
+    commits.forEach(c => {
+      if (c.parentIds.includes(commit.id)) {
+        visit(c);
+      }
+    });
+
+    visiting.delete(commit.id);
+    visited.add(commit.id);
+    result.push(commit);
+  }
+
+  // Start from roots
+  commits.filter(c => c.parentIds.length === 0 || c.isRoot).forEach(visit);
+  // Then any unvisited
+  commits.forEach(c => {
+    if (!visited.has(c.id)) visit(c);
+  });
+
+  return result;
+}

@@ -418,6 +418,39 @@ func (s *Storage) GetPRsByReviewer(ctx context.Context, userID string) ([]*domai
 	return prs, nil
 }
 
+func (s *Storage) GetPRsByAuthor(ctx context.Context, authorID string) ([]*domain.PullRequest, error) {
+	log := logger.FromContext(ctx)
+	query := `SELECT pull_request_id, pull_request_name, author_id, status, assigned_reviewers, created_at, merged_at, updated_at 
+              FROM pull_requests WHERE author_id = $1`
+
+	rows, err := s.db.QueryContext(ctx, query, authorID)
+	if err != nil {
+		log.Error(ctx, "failed to get PRs by author", zap.Error(err), zap.String("author_id", authorID))
+		return nil, fmt.Errorf("failed to get PRs: %w", err)
+	}
+	defer rows.Close()
+
+	var prs []*domain.PullRequest
+	for rows.Next() {
+		pr := &domain.PullRequest{}
+		var createdAt, updatedAt time.Time
+		var mergedAt sql.NullTime
+
+		if err := rows.Scan(&pr.PullRequestID, &pr.PullRequestName, &pr.AuthorID, &pr.Status,
+			pq.Array(&pr.AssignedReviewers), &createdAt, &mergedAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan PR: %w", err)
+		}
+
+		pr.CreatedAt = &createdAt
+		if mergedAt.Valid {
+			pr.MergedAt = &mergedAt.Time
+		}
+		prs = append(prs, pr)
+	}
+
+	return prs, nil
+}
+
 func (s *Storage) PRExists(ctx context.Context, prID string) (bool, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pull_requests WHERE pull_request_id = $1)`, prID).

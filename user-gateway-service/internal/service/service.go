@@ -386,9 +386,48 @@ func (s *Service) CreatePR(ctx context.Context, username string, req *domain.Cre
 
 // GetMyPRs gets PRs authored by user
 func (s *Service) GetMyPRs(ctx context.Context, username string, status string) ([]domain.PullRequest, error) {
-	// This would need a new endpoint in pr-allocation-service
-	// For now, return empty list
-	return []domain.PullRequest{}, nil
+	log := logger.FromContext(ctx)
+
+	prs, err := s.prClient.GetPRsByAuthor(ctx, username)
+	if err != nil {
+		log.Error(ctx, "failed to get authored PRs", zap.Error(err))
+		return nil, fmt.Errorf("failed to get authored PRs: %w", err)
+	}
+
+	result := make([]domain.PullRequest, 0, len(prs))
+	for _, pr := range prs {
+		if status != "" && pr.Status != status {
+			continue
+		}
+
+		domainPR := domain.PullRequest{
+			PRID:        pr.PRID,
+			PRName:      pr.PRName,
+			Title:       pr.PRName,
+			AuthorID:    pr.AuthorID,
+			AuthorName:  pr.AuthorID, // username = user_id
+			Status:      pr.Status,
+			ReviewerIDs: pr.AssignedReviewers,
+			CreatedAt:   pr.CreatedAt,
+			MergedAt:    pr.MergedAt,
+		}
+
+		// Add metadata if available
+		if meta, ok := s.prMetadata[pr.PRID]; ok {
+			domainPR.PRName = meta.PRName
+			domainPR.TeamName = meta.TeamName
+			domainPR.RepoName = meta.RepoName
+			domainPR.RootCommitID = meta.RootCommit
+			domainPR.SourceCommitID = meta.SourceCommit
+			domainPR.SourceCommitName = meta.SourceCommitName
+			domainPR.TargetCommitID = meta.TargetCommit
+			domainPR.TargetCommitName = meta.TargetCommitName
+		}
+
+		result = append(result, domainPR)
+	}
+
+	return result, nil
 }
 
 // GetReviewPRs gets PRs where user is reviewer

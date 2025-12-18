@@ -112,16 +112,14 @@ function App() {
       setError('Team name is required');
       return;
     }
-    if (newMembers.length === 0) {
-      setError('At least one member is required');
-      return;
-    }
     setLoading(true);
     setError(null);
     try {
+      // Always include current user in the team
+      const allMembers = [...new Set([username, ...newMembers])];
       const createdTeam = await api.createTeam(username, {
         team_name: newTeamName,
-        members: newMembers.map((m) => ({ username: m, is_active: true })),
+        members: allMembers.map((m) => ({ username: m, is_active: true })),
       });
       setTeam(createdTeam);
       setNewTeamName('');
@@ -632,7 +630,8 @@ function App() {
                     onChange={(e) => setNewTeamName(e.target.value)}
                   />
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Members</label>
+                    <label className="text-sm font-medium">Additional Members (optional)</label>
+                    <p className="text-xs text-slate-500">You will be automatically added to the team</p>
                     <div className="flex gap-2">
                       <Input
                         placeholder="Username"
@@ -645,7 +644,8 @@ function App() {
                       </Button>
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {newMembers.map((m) => (
+                      <Badge variant="default">{username} (you)</Badge>
+                      {newMembers.filter(m => m !== username).map((m) => (
                         <Badge
                           key={m}
                           variant="secondary"
@@ -660,7 +660,7 @@ function App() {
                   <Button
                     className="w-full"
                     onClick={handleCreateTeam}
-                    disabled={loading || !newTeamName || newMembers.length === 0}
+                    disabled={loading || !newTeamName}
                   >
                     Create Team
                   </Button>

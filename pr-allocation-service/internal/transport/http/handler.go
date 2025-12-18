@@ -56,6 +56,7 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	// Users - matching OpenAPI spec
 	router.HandleFunc("/users/setIsActive", h.SetUserActive).Methods("POST")
 	router.HandleFunc("/users/getReview", h.GetPRsByReviewer).Methods("GET")
+	router.HandleFunc("/users/getAuthored", h.GetPRsByAuthor).Methods("GET")
 	router.HandleFunc("/users/get", h.GetUser).Methods("GET")
 
 	// PRs - matching OpenAPI spec
@@ -291,6 +292,31 @@ func (h *Handler) GetPRsByReviewer(w http.ResponseWriter, r *http.Request) {
 	prs, err := h.service.GetPRsByReviewer(ctx, userID)
 	if err != nil {
 		log.Error(ctx, "failed to get PRs by reviewer", zap.Error(err))
+		h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, err.Error())
+		return
+	}
+
+	response := map[string]any{
+		"user_id":       userID,
+		"pull_requests": prs,
+	}
+	h.respondJSON(w, r, http.StatusOK, response)
+}
+
+// GetPRsByAuthor GET /users/getAuthored?user_id=...
+func (h *Handler) GetPRsByAuthor(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "user_id query parameter required")
+		return
+	}
+
+	prs, err := h.service.GetPRsByAuthor(ctx, userID)
+	if err != nil {
+		log.Error(ctx, "failed to get PRs by author", zap.Error(err))
 		h.respondError(w, r, http.StatusInternalServerError, domain.ErrNotFound, err.Error())
 		return
 	}

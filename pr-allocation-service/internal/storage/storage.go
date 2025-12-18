@@ -24,6 +24,7 @@ type Storage interface {
 	GetPR(ctx context.Context, prID string) (*domain.PullRequest, error)
 	UpdatePR(ctx context.Context, pr *domain.PullRequest) error
 	GetPRsByReviewer(ctx context.Context, userID string) ([]*domain.PullRequest, error)
+	GetPRsByAuthor(ctx context.Context, authorID string) ([]*domain.PullRequest, error)
 	PRExists(ctx context.Context, prID string) (bool, error)
 	GetAllPRs(ctx context.Context) ([]*domain.PullRequest, error)
 	GetOpenPRsByReviewers(ctx context.Context, userIDs []string) ([]*domain.PullRequest, error)

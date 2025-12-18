@@ -326,9 +326,34 @@ func (c *PRAllocationClient) MergePR(ctx context.Context, prID string) (*PRRespo
 
 // GetPRsByAuthor gets PRs by author
 func (c *PRAllocationClient) GetPRsByAuthor(ctx context.Context, authorID string) ([]PRResponse, error) {
-	// This endpoint doesn't exist in the current pr-allocation-service
-	// We'd need to add it or use a workaround
-	return nil, nil
+	url := fmt.Sprintf("%s/users/getAuthored?user_id=%s", c.baseURL, authorID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return []PRResponse{}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		PRs []PRResponse `json:"pull_requests"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.PRs, nil
 }
 
 // GetPRsByReviewer gets PRs where user is reviewer
@@ -354,7 +379,7 @@ func (c *PRAllocationClient) GetPRsByReviewer(ctx context.Context, reviewerID st
 	}
 
 	var result struct {
-		PRs []PRResponse `json:"prs"`
+		PRs []PRResponse `json:"pull_requests"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)

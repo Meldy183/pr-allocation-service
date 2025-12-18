@@ -214,6 +214,24 @@ func (s *Service) GetPRsByReviewer(ctx context.Context, userID string) ([]*domai
 	}
 	return shorts, nil
 }
+
+// GetPRsByAuthor returns PRs authored by user.
+func (s *Service) GetPRsByAuthor(ctx context.Context, authorID string) ([]*domain.PullRequestShort, error) {
+	prs, err := s.storage.GetPRsByAuthor(ctx, authorID)
+	if err != nil {
+		return nil, err
+	}
+	shorts := make([]*domain.PullRequestShort, len(prs))
+	for i, pr := range prs {
+		shorts[i] = &domain.PullRequestShort{
+			PullRequestID:   pr.PullRequestID,
+			PullRequestName: pr.PullRequestName,
+			AuthorID:        pr.AuthorID,
+			Status:          pr.Status,
+		}
+	}
+	return shorts, nil
+}
 func (s *Service) selectReviewers(teamMembers []*domain.User, authorID string, maxCount int) []string {
 	candidates := make([]*domain.User, 0)
 	for _, member := range teamMembers {
