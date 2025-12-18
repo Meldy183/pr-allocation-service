@@ -58,7 +58,7 @@ func (s *Storage) Close(ctx context.Context) error {
 // TeamExists checks if team exists
 func (s *Storage) TeamExists(ctx context.Context, teamID uuid.UUID) (bool, error) {
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM teams WHERE id = $1)`
+	query := `SELECT EXISTS(SELECT 1 FROM teams_storage WHERE id = $1)`
 	err := s.db.QueryRowContext(ctx, query, teamID).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("failed to check team existence: %w", err)

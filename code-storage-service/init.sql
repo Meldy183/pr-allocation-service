@@ -1,5 +1,5 @@
 -- Teams table (teams can be managed by external service, but we need reference)
-CREATE TABLE IF NOT EXISTS teams (
+CREATE TABLE IF NOT EXISTS teams_storage (
     id UUID PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS teams (
 -- Commits table - stores all commits
 CREATE TABLE IF NOT EXISTS commits (
     id UUID PRIMARY KEY,
-    team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    team_id UUID NOT NULL REFERENCES teams_storage(id) ON DELETE CASCADE,
     root_commit UUID NOT NULL,
     parent_commit_ids TEXT[] NOT NULL DEFAULT '{}',
     code BYTEA NOT NULL,
