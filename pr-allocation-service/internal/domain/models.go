@@ -1,11 +1,16 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // User represents a team member.
 type User struct {
 	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
+	TeamID    uuid.UUID `json:"team_id,omitempty"`
 	TeamName  string    `json:"team_name,omitempty"`
 	IsActive  bool      `json:"is_active"`
 	CreatedAt time.Time `json:"-"`
@@ -21,6 +26,7 @@ type TeamMember struct {
 
 // The Team represents a group of users.
 type Team struct {
+	ID        uuid.UUID    `json:"team_id"`
 	TeamName  string       `json:"team_name"`
 	Members   []TeamMember `json:"members"`
 	CreatedAt time.Time    `json:"-"`

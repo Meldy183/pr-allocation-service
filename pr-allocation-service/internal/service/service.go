@@ -9,6 +9,7 @@ import (
 	"github.com/Meldy183/pr-allocation-service/internal/domain"
 	"github.com/Meldy183/pr-allocation-service/internal/storage"
 	"github.com/Meldy183/shared/pkg/logger"
+	"github.com/google/uuid"
 
 	"go.uber.org/zap"
 )
@@ -81,10 +82,10 @@ func (s *Service) CreatePR(ctx context.Context, req *domain.CreatePRRequest) (*d
 	if err != nil {
 		return nil, fmt.Errorf("%s: author not found", domain.ErrNotFound)
 	}
-	if author.TeamName == "" {
+	if author.TeamID == uuid.Nil {
 		return nil, fmt.Errorf("%s: author has no team", domain.ErrNotFound)
 	}
-	teamMembers, err := s.storage.GetUsersByTeam(ctx, author.TeamName)
+	teamMembers, err := s.storage.GetUsersByTeamID(ctx, author.TeamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get team members: %w", err)
 	}
@@ -167,7 +168,7 @@ func (s *Service) ReassignReviewer(
 	if err != nil {
 		return "", nil, fmt.Errorf("%s: old reviewer not found", domain.ErrNotFound)
 	}
-	teamMembers, err := s.storage.GetUsersByTeam(ctx, oldReviewer.TeamName)
+	teamMembers, err := s.storage.GetUsersByTeamID(ctx, oldReviewer.TeamID)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to get team members: %w", err)
 	}
@@ -388,9 +389,9 @@ func (s *Service) BulkDeactivateTeamUsers(ctx context.Context, req *domain.BulkD
 			continue
 		}
 		// Get potential reviewers from author's team (excluding deactivating users and author)
-		teamMembers, err := s.storage.GetUsersByTeam(ctx, author.TeamName)
+		teamMembers, err := s.storage.GetUsersByTeamID(ctx, author.TeamID)
 		if err != nil {
-			log.Warn(ctx, "failed to get team members", zap.String("team_name", author.TeamName), zap.Error(err))
+			log.Warn(ctx, "failed to get team members", zap.String("team_id", author.TeamID.String()), zap.Error(err))
 			pr.AssignedReviewers = newReviewers
 			if err := s.storage.UpdatePR(ctx, pr); err != nil {
 				log.Error(ctx, "failed to update PR reviewers", zap.String("pr_id", pr.PullRequestID), zap.Error(err))
@@ -453,4 +454,24 @@ func (s *Service) BulkDeactivateTeamUsers(ctx context.Context, req *domain.BulkD
 		DeactivatedCount: len(userIDs),
 		ReassignedPRs:    reassignments,
 	}, nil
+}
+
+// GetTeamIDByName resolves team name to team UUID.
+func (s *Service) GetTeamIDByName(ctx context.Context, teamName string) (string, error) {
+	log := logger.FromContext(ctx)
+	log.Info(ctx, "resolving team name to ID", zap.String("team_name", teamName))
+
+	teamID, err := s.storage.GetTeamIDByName(ctx, teamName)
+	if err != nil {
+		return "", err
+	}
+
+	return teamID.String(), nil
+}
+
+// GetUser returns user by ID.
+func (s *Service) GetUser(ctx context.Context, userID string) (*domain.User, error) {
+	log := logger.FromContext(ctx)
+	log.Info(ctx, "getting user", zap.String("user_id", userID))
+	return s.storage.GetUser(ctx, userID)
 }

@@ -50,11 +50,13 @@ func (h *Handler) RegisterRoutes(router *mux.Router, log logger.Logger) {
 	// Teams - matching OpenAPI spec
 	router.HandleFunc("/team/add", h.CreateTeam).Methods("POST")
 	router.HandleFunc("/team/get", h.GetTeam).Methods("GET")
+	router.HandleFunc("/team/resolve", h.ResolveTeamID).Methods("GET")
 	router.HandleFunc("/team/deactivateUsers", h.BulkDeactivateTeamUsers).Methods("POST")
 
 	// Users - matching OpenAPI spec
 	router.HandleFunc("/users/setIsActive", h.SetUserActive).Methods("POST")
 	router.HandleFunc("/users/getReview", h.GetPRsByReviewer).Methods("GET")
+	router.HandleFunc("/users/get", h.GetUser).Methods("GET")
 
 	// PRs - matching OpenAPI spec
 	router.HandleFunc("/pullRequest/create", h.CreatePR).Methods("POST")
@@ -363,4 +365,49 @@ func (h *Handler) BulkDeactivateTeamUsers(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.respondJSON(w, r, http.StatusOK, response)
+}
+
+// ResolveTeamID GET /team/resolve?team_name=...
+func (h *Handler) ResolveTeamID(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	teamName := r.URL.Query().Get("team_name")
+	if teamName == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "team_name query parameter required")
+		return
+	}
+
+	teamID, err := h.service.GetTeamIDByName(ctx, teamName)
+	if err != nil {
+		log.Error(ctx, "failed to resolve team", zap.Error(err))
+		h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "team not found")
+		return
+	}
+
+	h.respondJSON(w, r, http.StatusOK, map[string]any{
+		"team_name": teamName,
+		"team_id":   teamID,
+	})
+}
+
+// GetUser GET /users/get?user_id=...
+func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := logger.FromContext(ctx)
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		h.respondError(w, r, http.StatusBadRequest, domain.ErrInvalidRequest, "user_id query parameter required")
+		return
+	}
+
+	user, err := h.service.GetUser(ctx, userID)
+	if err != nil {
+		log.Error(ctx, "failed to get user", zap.Error(err))
+		h.respondError(w, r, http.StatusNotFound, domain.ErrNotFound, "user not found")
+		return
+	}
+
+	h.respondJSON(w, r, http.StatusOK, map[string]any{"user": user})
 }

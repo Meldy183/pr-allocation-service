@@ -42,37 +42,34 @@ func NewService(prClient *client.PRAllocationClient, codeClient *client.CodeStor
 func (s *Service) GetUserProfile(ctx context.Context, userID string) (*domain.UserProfile, error) {
 	log := logger.FromContext(ctx)
 
-	// Get user's PRs to find their team
-	prs, err := s.prClient.GetPRsByReviewer(ctx, userID)
+	// Get user from pr-allocation-service
+	user, err := s.prClient.GetUser(ctx, userID)
 	if err != nil {
-		log.Error(ctx, "failed to get user PRs", zap.Error(err))
+		log.Error(ctx, "failed to get user", zap.Error(err))
+		return nil, domain.ErrUserNotFound
 	}
 
-	// Try to find user in teams by checking their authored PRs
-	// This is a workaround - ideally pr-allocation-service would have a user lookup endpoint
-
-	// For now, we'll return a basic profile
-	// In real implementation, we'd query the database or have a user service
-
-	if prs == nil || len(prs) == 0 {
-		// Try to get user info another way - check if they're an author
-		// This is a limitation of the current API
-		log.Warn(ctx, "could not find user info", zap.String("user_id", userID))
-	}
-
-	// Return placeholder - real implementation needs proper user lookup
 	return &domain.UserProfile{
-		UserID:   userID,
-		Username: userID, // Placeholder
-		IsActive: true,
+		UserID:   user.UserID,
+		Username: user.Username,
+		TeamID:   user.TeamID,
+		TeamName: user.TeamName,
+		IsActive: user.IsActive,
 	}, nil
 }
 
-// GetUserTeamID gets user's team ID (placeholder - needs proper implementation)
+// ResolveTeamName resolves team name to team UUID
+func (s *Service) ResolveTeamName(ctx context.Context, teamName string) (uuid.UUID, error) {
+	return s.prClient.ResolveTeamID(ctx, teamName)
+}
+
+// GetUserTeamID gets user's team ID
 func (s *Service) GetUserTeamID(ctx context.Context, userID string) (uuid.UUID, error) {
-	// In real implementation, this would query pr-allocation-service
-	// For now, we trust the user's requests and validate at code-storage level
-	return uuid.Nil, nil
+	user, err := s.prClient.GetUser(ctx, userID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return user.TeamID, nil
 }
 
 // InitRepository initializes a new repository

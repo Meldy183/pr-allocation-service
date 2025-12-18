@@ -1,20 +1,12 @@
--- Teams table (teams can be managed by external service, but we need reference)
-CREATE TABLE IF NOT EXISTS teams_storage (
-    id UUID PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Commits table - stores all commits
+-- Commits table - stores all commits (uses teams table from pr-allocation)
 CREATE TABLE IF NOT EXISTS commits (
     id UUID PRIMARY KEY,
-    team_id UUID NOT NULL REFERENCES teams_storage(id) ON DELETE CASCADE,
+    team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     root_commit UUID NOT NULL,
     parent_commit_ids TEXT[] NOT NULL DEFAULT '{}',
     code BYTEA NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    -- Index for faster lookups
     CONSTRAINT fk_root_commit CHECK (
         (id = root_commit AND parent_commit_ids = '{}') OR
         (id != root_commit AND array_length(parent_commit_ids, 1) >= 1)
@@ -41,4 +33,3 @@ CREATE TABLE IF NOT EXISTS commit_names (
 
 -- Index for lookup by commit_id
 CREATE INDEX IF NOT EXISTS idx_commit_names_commit_id ON commit_names(commit_id);
-

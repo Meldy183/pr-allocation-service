@@ -44,10 +44,11 @@ type Team struct {
 
 // User represents a user
 type User struct {
-	UserID   string `json:"user_id"`
-	Username string `json:"username"`
-	TeamName string `json:"team_name"`
-	IsActive bool   `json:"is_active"`
+	UserID   string    `json:"user_id"`
+	Username string    `json:"username"`
+	TeamID   uuid.UUID `json:"team_id"`
+	TeamName string    `json:"team_name"`
+	IsActive bool      `json:"is_active"`
 }
 
 // PRResponse represents PR response from pr-allocation-service
@@ -91,7 +92,72 @@ func (c *PRAllocationClient) GetTeam(ctx context.Context, teamName string) (*Tea
 	return &team, nil
 }
 
-// GetUserByID finds user in team by user_id
+// ResolveTeamID resolves team name to team UUID
+func (c *PRAllocationClient) ResolveTeamID(ctx context.Context, teamName string) (uuid.UUID, error) {
+	url := fmt.Sprintf("%s/team/resolve?team_name=%s", c.baseURL, teamName)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return uuid.Nil, fmt.Errorf("team not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return uuid.Nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		TeamName string    `json:"team_name"`
+		TeamID   uuid.UUID `json:"team_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.TeamID, nil
+}
+
+// GetUser gets user by ID
+func (c *PRAllocationClient) GetUser(ctx context.Context, userID string) (*User, error) {
+	url := fmt.Sprintf("%s/users/get?user_id=%s", c.baseURL, userID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("user not found")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		User User `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result.User, nil
+}
+
+// GetUserByID finds user in team by user_id (deprecated, use GetUser)
 func (c *PRAllocationClient) GetUserByID(ctx context.Context, userID string) (*User, string, error) {
 	// We need to find the user's team first
 	// This is a simplified approach - in real world we'd have a dedicated endpoint

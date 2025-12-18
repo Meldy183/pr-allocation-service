@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"time"
 
 	"github.com/Meldy183/pr-allocation-service/internal/domain"
@@ -60,10 +61,10 @@ func (s *Storage) Close(ctx context.Context) error {
 // CreateUser User operations.
 func (s *Storage) CreateUser(ctx context.Context, user *domain.User) error {
 	log := logger.FromContext(ctx)
-	query := `INSERT INTO users (user_id, username, team_name, is_active, created_at, updated_at)
+	query := `INSERT INTO users (user_id, username, team_id, is_active, created_at, updated_at)
               VALUES ($1, $2, $3, $4, $5, $6)
               ON CONFLICT (user_id) DO UPDATE 
-              SET username = $2, team_name = $3, is_active = $4, updated_at = $6`
+              SET username = $2, team_id = $3, is_active = $4, updated_at = $6`
 
 	now := time.Now()
 	user.CreatedAt = now
@@ -74,7 +75,7 @@ func (s *Storage) CreateUser(ctx context.Context, user *domain.User) error {
 		query,
 		user.UserID,
 		user.Username,
-		user.TeamName,
+		user.TeamID,
 		user.IsActive,
 		user.CreatedAt,
 		user.UpdatedAt,
@@ -90,14 +91,19 @@ func (s *Storage) CreateUser(ctx context.Context, user *domain.User) error {
 
 func (s *Storage) GetUser(ctx context.Context, userID string) (*domain.User, error) {
 	log := logger.FromContext(ctx)
-	query := `SELECT user_id, username, team_name, is_active, created_at, updated_at FROM users WHERE user_id = $1`
+	query := `SELECT u.user_id, u.username, u.team_id, t.team_name, u.is_active, u.created_at, u.updated_at 
+	          FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.user_id = $1`
 
 	user := &domain.User{}
+	var teamID uuid.NullUUID
 	var teamName sql.NullString
 	err := s.db.QueryRowContext(ctx, query, userID).Scan(
-		&user.UserID, &user.Username, &teamName, &user.IsActive, &user.CreatedAt, &user.UpdatedAt,
+		&user.UserID, &user.Username, &teamID, &teamName, &user.IsActive, &user.CreatedAt, &user.UpdatedAt,
 	)
 
+	if teamID.Valid {
+		user.TeamID = teamID.UUID
+	}
 	if teamName.Valid {
 		user.TeamName = teamName.String
 	}
@@ -117,7 +123,7 @@ func (s *Storage) GetUser(ctx context.Context, userID string) (*domain.User, err
 
 func (s *Storage) UpdateUser(ctx context.Context, user *domain.User) error {
 	log := logger.FromContext(ctx)
-	query := `UPDATE users SET username = $1, team_name = $2, is_active = $3, updated_at = $4 WHERE user_id = $5`
+	query := `UPDATE users SET username = $1, team_id = $2, is_active = $3, updated_at = $4 WHERE user_id = $5`
 
 	user.UpdatedAt = time.Now()
 
@@ -125,7 +131,7 @@ func (s *Storage) UpdateUser(ctx context.Context, user *domain.User) error {
 		ctx,
 		query,
 		user.Username,
-		user.TeamName,
+		user.TeamID,
 		user.IsActive,
 		user.UpdatedAt,
 		user.UserID,
@@ -147,13 +153,14 @@ func (s *Storage) UpdateUser(ctx context.Context, user *domain.User) error {
 	return nil
 }
 
-func (s *Storage) GetUsersByTeam(ctx context.Context, teamName string) ([]*domain.User, error) {
+func (s *Storage) GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]*domain.User, error) {
 	log := logger.FromContext(ctx)
-	query := `SELECT user_id, username, team_name, is_active, created_at, updated_at FROM users WHERE team_name = $1`
+	query := `SELECT u.user_id, u.username, u.team_id, t.team_name, u.is_active, u.created_at, u.updated_at 
+	          FROM users u LEFT JOIN teams t ON u.team_id = t.id WHERE u.team_id = $1`
 
-	rows, err := s.db.QueryContext(ctx, query, teamName)
+	rows, err := s.db.QueryContext(ctx, query, teamID)
 	if err != nil {
-		log.Error(ctx, "failed to get users by team", zap.Error(err), zap.String("team_name", teamName))
+		log.Error(ctx, "failed to get users by team", zap.Error(err), zap.String("team_id", teamID.String()))
 		return nil, fmt.Errorf("failed to get users: %w", err)
 	}
 	defer rows.Close()
@@ -161,17 +168,21 @@ func (s *Storage) GetUsersByTeam(ctx context.Context, teamName string) ([]*domai
 	var users []*domain.User
 	for rows.Next() {
 		user := &domain.User{}
-		var team sql.NullString
-		if err := rows.Scan(&user.UserID, &user.Username, &team, &user.IsActive, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		var tID uuid.NullUUID
+		var teamName sql.NullString
+		if err := rows.Scan(&user.UserID, &user.Username, &tID, &teamName, &user.IsActive, &user.CreatedAt, &user.UpdatedAt); err != nil {
 			log.Error(ctx, "failed to scan user", zap.Error(err))
 			return nil, fmt.Errorf("failed to scan user: %w", err)
 		}
-		if team.Valid {
-			user.TeamName = team.String
+		if tID.Valid {
+			user.TeamID = tID.UUID
+		}
+		if teamName.Valid {
+			user.TeamName = teamName.String
 		}
 		users = append(users, user)
 	}
-	log.Info(ctx, "users retrieved by team", zap.String("team_name", teamName), zap.Int("count", len(users)))
+	log.Info(ctx, "users retrieved by team", zap.String("team_id", teamID.String()), zap.Int("count", len(users)))
 
 	return users, nil
 }
@@ -186,13 +197,13 @@ func (s *Storage) CreateTeam(ctx context.Context, team *domain.Team) error {
 	}
 	defer tx.Rollback()
 
-	// Insert team
-	query := `INSERT INTO teams (team_name, created_at, updated_at) VALUES ($1, $2, $3)`
+	// Insert team and get generated UUID
+	query := `INSERT INTO teams (team_name, created_at, updated_at) VALUES ($1, $2, $3) RETURNING id`
 	now := time.Now()
 	team.CreatedAt = now
 	team.UpdatedAt = now
 
-	_, err = tx.ExecContext(ctx, query, team.TeamName, team.CreatedAt, team.UpdatedAt)
+	err = tx.QueryRowContext(ctx, query, team.TeamName, team.CreatedAt, team.UpdatedAt).Scan(&team.ID)
 	if err != nil {
 		log.Error(ctx, "failed to create team", zap.Error(err), zap.String("team_name", team.TeamName))
 		return fmt.Errorf("failed to create team: %w", err)
@@ -203,16 +214,17 @@ func (s *Storage) CreateTeam(ctx context.Context, team *domain.Team) error {
 		user := &domain.User{
 			UserID:   member.UserID,
 			Username: member.Username,
+			TeamID:   team.ID,
 			TeamName: team.TeamName,
 			IsActive: member.IsActive,
 		}
 
-		userQuery := `INSERT INTO users (user_id, username, team_name, is_active, created_at, updated_at)
+		userQuery := `INSERT INTO users (user_id, username, team_id, is_active, created_at, updated_at)
                       VALUES ($1, $2, $3, $4, $5, $6)
                       ON CONFLICT (user_id) DO UPDATE 
-                      SET username = $2, team_name = $3, is_active = $4, updated_at = $6`
+                      SET username = $2, team_id = $3, is_active = $4, updated_at = $6`
 
-		_, err = tx.ExecContext(ctx, userQuery, user.UserID, user.Username, user.TeamName, user.IsActive, now, now)
+		_, err = tx.ExecContext(ctx, userQuery, user.UserID, user.Username, user.TeamID, user.IsActive, now, now)
 		if err != nil {
 			log.Error(ctx, "failed to create/update user", zap.Error(err), zap.String("user_id", user.UserID))
 			return fmt.Errorf("failed to create user: %w", err)
@@ -223,31 +235,32 @@ func (s *Storage) CreateTeam(ctx context.Context, team *domain.Team) error {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	log.Info(ctx, "team created", zap.String("team_name", team.TeamName), zap.Int("members", len(team.Members)))
+	log.Info(ctx, "team created", zap.String("team_name", team.TeamName), zap.String("team_id", team.ID.String()), zap.Int("members", len(team.Members)))
 	return nil
 }
 
 func (s *Storage) GetTeam(ctx context.Context, teamName string) (*domain.Team, error) {
 	log := logger.FromContext(ctx)
 
-	// Check if team exists
-	var exists bool
-	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM teams WHERE team_name = $1)`, teamName).Scan(&exists)
-	if err != nil {
-		log.Error(ctx, "failed to check team existence", zap.Error(err), zap.String("team_name", teamName))
-		return nil, fmt.Errorf("failed to check team: %w", err)
-	}
-	if !exists {
+	// Get team with ID
+	var teamID uuid.UUID
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM teams WHERE team_name = $1`, teamName).Scan(&teamID)
+	if err == sql.ErrNoRows {
 		return nil, errors.New("team not found")
+	}
+	if err != nil {
+		log.Error(ctx, "failed to get team", zap.Error(err), zap.String("team_name", teamName))
+		return nil, fmt.Errorf("failed to get team: %w", err)
 	}
 
 	// Get team members
-	users, err := s.GetUsersByTeam(ctx, teamName)
+	users, err := s.GetUsersByTeamID(ctx, teamID)
 	if err != nil {
 		return nil, err
 	}
 
 	team := &domain.Team{
+		ID:       teamID,
 		TeamName: teamName,
 		Members:  make([]domain.TeamMember, len(users)),
 	}
@@ -260,7 +273,7 @@ func (s *Storage) GetTeam(ctx context.Context, teamName string) (*domain.Team, e
 		}
 	}
 
-	log.Info(ctx, "team retrieved successfully", zap.String("team_name", teamName), zap.Int("members", len(team.Members)))
+	log.Info(ctx, "team retrieved successfully", zap.String("team_name", teamName), zap.String("team_id", teamID.String()), zap.Int("members", len(team.Members)))
 	return team, nil
 }
 
@@ -274,6 +287,22 @@ func (s *Storage) TeamExists(ctx context.Context, teamName string) (bool, error)
 	}
 	log.Debug(ctx, "team existence checked", zap.String("team_name", teamName), zap.Bool("exists", exists))
 	return exists, nil
+}
+
+// GetTeamIDByName returns team UUID by team name
+func (s *Storage) GetTeamIDByName(ctx context.Context, teamName string) (uuid.UUID, error) {
+	log := logger.FromContext(ctx)
+	var teamID uuid.UUID
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM teams WHERE team_name = $1`, teamName).Scan(&teamID)
+	if err == sql.ErrNoRows {
+		return uuid.Nil, errors.New("team not found")
+	}
+	if err != nil {
+		log.Error(ctx, "failed to get team ID", zap.Error(err), zap.String("team_name", teamName))
+		return uuid.Nil, fmt.Errorf("failed to get team ID: %w", err)
+	}
+	log.Debug(ctx, "team ID retrieved", zap.String("team_name", teamName), zap.String("team_id", teamID.String()))
+	return teamID, nil
 }
 
 // CreatePR PR operations.

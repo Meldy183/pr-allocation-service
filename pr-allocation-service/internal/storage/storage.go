@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Meldy183/pr-allocation-service/internal/domain"
+	"github.com/google/uuid"
 )
 
 // Storage defines the interface for data persistence.
@@ -12,11 +13,12 @@ type Storage interface {
 	CreateUser(ctx context.Context, user *domain.User) error
 	GetUser(ctx context.Context, userID string) (*domain.User, error)
 	UpdateUser(ctx context.Context, user *domain.User) error
-	GetUsersByTeam(ctx context.Context, teamName string) ([]*domain.User, error)
+	GetUsersByTeamID(ctx context.Context, teamID uuid.UUID) ([]*domain.User, error)
 	// CreateTeam Team operations
 	CreateTeam(ctx context.Context, team *domain.Team) error
 	GetTeam(ctx context.Context, teamName string) (*domain.Team, error)
 	TeamExists(ctx context.Context, teamName string) (bool, error)
+	GetTeamIDByName(ctx context.Context, teamName string) (uuid.UUID, error)
 	// CreatePR PR operations
 	CreatePR(ctx context.Context, pr *domain.PullRequest) error
 	GetPR(ctx context.Context, prID string) (*domain.PullRequest, error)
