@@ -5,14 +5,15 @@ COPY shared/go.mod shared/go.sum ./shared/
 COPY pr-allocation-service/go.mod pr-allocation-service/go.sum ./pr-allocation-service/
 COPY code-storage-service/go.mod code-storage-service/go.sum ./code-storage-service/
 COPY user-gateway-service/go.mod user-gateway-service/go.sum ./user-gateway-service/
-RUN cd pr-allocation-service && go mod download
+RUN cd user-gateway-service && go mod download
 COPY shared ./shared
-COPY pr-allocation-service ./pr-allocation-service
-RUN cd pr-allocation-service && go build -o /service ./cmd/pr-allocation-service/main.go
+COPY user-gateway-service ./user-gateway-service
+RUN cd user-gateway-service && go build -o /service ./cmd/main.go
 
 FROM alpine:3.22
 WORKDIR /app
 COPY --from=builder /service .
-COPY --from=builder /app/pr-allocation-service/config ./config
-EXPOSE 8080
+COPY --from=builder /app/user-gateway-service/config ./config
+EXPOSE 8082
 CMD ["./service"]
+

@@ -1,0 +1,543 @@
+openapi: 3.0.3
+info:
+  title: User Gateway Service
+  description: |
+    Фасад-сервис для пользователей. 
+    Оркестрирует pr-allocation-service и code-storage-service.
+    Валидирует права доступа пользователей к репозиториям своей команды.
+  version: "1.0.0"
+
+tags:
+  - name: Profile
+    description: Информация о пользователе
+  - name: Repository
+    description: Работа с репозиториями и коммитами
+  - name: PullRequests
+    description: Управление Pull Requests
+  - name: Health
+
+components:
+  parameters:
+    UserIdHeader:
+      name: X-User-ID
+      in: header
+      required: true
+      schema:
+        type: string
+      description: Идентификатор текущего пользователя
+
+    PRIdPath:
+      name: pr_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Идентификатор Pull Request
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - ACCESS_DENIED
+                - USER_NOT_FOUND
+                - USER_INACTIVE
+                - TEAM_NOT_FOUND
+                - COMMIT_NOT_FOUND
+                - PR_NOT_FOUND
+                - PR_ALREADY_EXISTS
+                - PR_ALREADY_MERGED
+                - NOT_REVIEWER
+                - INVALID_REQUEST
+                - INTERNAL_ERROR
+            message:
+              type: string
+      example:
+        error:
+          code: ACCESS_DENIED
+          message: "You don't have access to this repository"
+
+    UserProfile:
+      type: object
+      required: [user_id, username, team_id, team_name, is_active]
+      properties:
+        user_id:
+          type: string
+        username:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+        team_name:
+          type: string
+        is_active:
+          type: boolean
+
+    Commit:
+      type: object
+      required: [commit_id, root_commit, parent_commit_ids, created_at]
+      properties:
+        commit_id:
+          type: string
+          format: uuid
+        root_commit:
+          type: string
+          format: uuid
+        parent_commit_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        commit_name:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    PullRequest:
+      type: object
+      required: [pr_id, title, author_id, status, reviewer_ids, source_commit, target_commit, created_at]
+      properties:
+        pr_id:
+          type: string
+        title:
+          type: string
+        author_id:
+          type: string
+        author_name:
+          type: string
+        status:
+          type: string
+          enum: [OPEN, MERGED, REJECTED]
+        reviewer_ids:
+          type: array
+          items:
+            type: string
+        source_commit:
+          type: string
+          format: uuid
+        target_commit:
+          type: string
+          format: uuid
+        root_commit:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        merged_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    PullRequestList:
+      type: object
+      required: [pull_requests]
+      properties:
+        pull_requests:
+          type: array
+          items:
+            $ref: '#/components/schemas/PullRequest'
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/me:
+    get:
+      tags: [Profile]
+      summary: Получить профиль текущего пользователя
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      responses:
+        '200':
+          description: Профиль пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+        '404':
+          description: Пользователь не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/repo/init:
+    post:
+      tags: [Repository]
+      summary: Инициализировать новый репозиторий для команды
+      description: Создаёт root commit с начальным кодом. Пользователь должен быть активным.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с исходным кодом (≤ 100MB)
+      responses:
+        '201':
+          description: Репозиторий инициализирован
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commit]
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/Commit'
+        '403':
+          description: Пользователь неактивен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Пользователь или команда не найдены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/repo/push:
+    post:
+      tags: [Repository]
+      summary: Создать новый коммит
+      description: Создаёт коммит поверх существующего. Проверяет доступ к репозиторию команды.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [root_commit, parent_commit, code]
+              properties:
+                root_commit:
+                  type: string
+                  format: uuid
+                  description: Идентификатор репозитория (root commit)
+                parent_commit:
+                  type: string
+                  format: uuid
+                  description: Родительский коммит
+                code:
+                  type: string
+                  format: binary
+                  description: ZIP архив с кодом (≤ 100MB)
+      responses:
+        '201':
+          description: Коммит создан
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commit]
+                properties:
+                  commit:
+                    $ref: '#/components/schemas/Commit'
+        '403':
+          description: Нет доступа к репозиторию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Репозиторий или родительский коммит не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/repo/checkout:
+    get:
+      tags: [Repository]
+      summary: Получить код коммита
+      description: Возвращает ZIP архив с кодом. Проверяет доступ к репозиторию команды.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: root_commit
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Идентификатор репозитория
+        - name: commit_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Идентификатор коммита
+      responses:
+        '200':
+          description: ZIP архив с кодом
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Нет доступа к репозиторию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Коммит не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/create:
+    post:
+      tags: [PullRequests]
+      summary: Создать Pull Request
+      description: |
+        Создаёт PR и автоматически назначает ревьюверов из команды.
+        Проверяет, что пользователь имеет доступ к репозиторию.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, root_commit, source_commit, target_commit]
+              properties:
+                title:
+                  type: string
+                  description: Название PR
+                root_commit:
+                  type: string
+                  format: uuid
+                  description: Идентификатор репозитория
+                source_commit:
+                  type: string
+                  format: uuid
+                  description: Коммит с изменениями (откуда мержим)
+                target_commit:
+                  type: string
+                  format: uuid
+                  description: Целевой коммит (куда мержим)
+            example:
+              title: "Add user authentication"
+              root_commit: "123e4567-e89b-12d3-a456-426614174000"
+              source_commit: "123e4567-e89b-12d3-a456-426614174001"
+              target_commit: "123e4567-e89b-12d3-a456-426614174002"
+      responses:
+        '201':
+          description: PR создан
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pull_request]
+                properties:
+                  pull_request:
+                    $ref: '#/components/schemas/PullRequest'
+        '403':
+          description: Нет доступа к репозиторию
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: PR уже существует
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/my:
+    get:
+      tags: [PullRequests]
+      summary: Получить мои Pull Requests
+      description: Возвращает список PR, где текущий пользователь является автором.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, MERGED, REJECTED]
+          description: Фильтр по статусу
+      responses:
+        '200':
+          description: Список PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestList'
+
+  /api/pr/reviews:
+    get:
+      tags: [PullRequests]
+      summary: Получить PR на ревью
+      description: Возвращает список PR, где текущий пользователь назначен ревьювером.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, MERGED, REJECTED]
+          description: Фильтр по статусу
+      responses:
+        '200':
+          description: Список PR на ревью
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestList'
+
+  /api/pr/{pr_id}/approve:
+    post:
+      tags: [PullRequests]
+      summary: Одобрить PR
+      description: |
+        Одобряет PR и автоматически выполняет merge коммитов в code-storage.
+        Только назначенный ревьювер может одобрить PR.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/PRIdPath'
+      responses:
+        '200':
+          description: PR одобрен и смержен
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pull_request, merge_commit]
+                properties:
+                  pull_request:
+                    $ref: '#/components/schemas/PullRequest'
+                  merge_commit:
+                    $ref: '#/components/schemas/Commit'
+        '403':
+          description: Пользователь не является ревьювером этого PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: PR уже смержен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/{pr_id}/reject:
+    post:
+      tags: [PullRequests]
+      summary: Отклонить PR
+      description: Отклоняет PR. Только назначенный ревьювер может отклонить PR.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/PRIdPath'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Причина отклонения
+      responses:
+        '200':
+          description: PR отклонён
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pull_request]
+                properties:
+                  pull_request:
+                    $ref: '#/components/schemas/PullRequest'
+        '403':
+          description: Пользователь не является ревьювером этого PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/pr/{pr_id}/code:
+    get:
+      tags: [PullRequests]
+      summary: Получить код PR
+      description: Возвращает ZIP архив с кодом source commit PR. Для ревью.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/PRIdPath'
+      responses:
+        '200':
+          description: ZIP архив с кодом
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Нет доступа к PR
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: PR не найден
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+

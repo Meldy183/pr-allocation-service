@@ -6,4 +6,5 @@ use (
 	./code-storage-service
 	./pr-allocation-service
 	./shared
+	./user-gateway-service
 )

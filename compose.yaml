@@ -55,5 +55,25 @@ services:
     depends_on:
       - postgres
 
+  user-gateway-service:
+    build:
+      context: .
+      dockerfile: user-gateway-service/Dockerfile
+    container_name: user-gateway-service
+    ports:
+      - "8082:8082"
+    environment:
+      ENV: ${ENV:-dev}
+      SERVER_HOST: ${SERVER_HOST:-0.0.0.0}
+      SERVER_PORT: "8082"
+      SERVICES_PR_ALLOCATION_HOST: pr-allocation-service
+      SERVICES_PR_ALLOCATION_PORT: "8080"
+      SERVICES_CODE_STORAGE_HOST: code-storage-service
+      SERVICES_CODE_STORAGE_PORT: "8081"
+      CONFIG_PATH: ${CONFIG_PATH:-./config}
+    depends_on:
+      - pr-allocation-service
+      - code-storage-service
+
 volumes:
   postgres_data:
